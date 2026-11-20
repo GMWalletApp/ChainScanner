@@ -2,6 +2,18 @@
 
 ChainScanner follows confirmed transaction activity once per configured network and delivers it to every subscriber watching a matching address. Payments and other consumers interpret the original transaction evidence independently.
 
+## Project layout
+
+| Path | Responsibility |
+| --- | --- |
+| `scanner.go` | Public Go API imported as `github.com/GMWalletApp/ChainScanner`. |
+| `cmd/chainscanner/` | Standalone server entry point and configuration. |
+| `internal/chains/` | Network definitions, RPC transports, height probes and chain-specific transaction decoding. |
+| `internal/engine/` | Scan loop, durable SQLite cursors, subscriptions and delivery queues. |
+| `internal/feed/` | Consumer HTTP API, request and response types, and Go client. |
+| `internal/nodes/` | Built-in catalog, node registry, failover and admin HTTP API. |
+| `internal/testutil/` | Shared RPC test fixtures. |
+
 ## Run
 
 With Go 1.25 or later, run `go build ./cmd/chainscanner`, then `./chainscanner -config chainscanner.json`. Standalone mode keeps subscriptions, active cursors and pending deliveries in memory by default. Consumers connect to its HTTP API. Bind to loopback or put the API behind TLS. Set each consumer's token to a separate randomly generated secret, for example the output of `openssl rand -hex 32`.
@@ -115,6 +127,6 @@ Set `admin_token` in the standalone server's JSON configuration to a random secr
 
 A test returns `height`, `height_unit`, `status`, `checked_at_ms` (Unix time) and `latency_ms`. The status is `untested`, `ok`, `timeout` or `unavailable`. Unsuccessful observations have a null height. The batch tests up to eight nodes at once, with one batch active per process. GET reads the stored results without spending RPC quota. The consumer heights endpoint reports the current scan cursor and returns -1 for idle chains. Explicit admin tests can query an idle node without starting its scanner. In memory mode, recreate custom node entries from configuration or your administration client after restart. For Beacon SSE the primary observation is a beacon slot. For Aptos it is a ledger version, for Sui a checkpoint, and for Solana a slot.
 
-The [built-in catalog](nodes_builtin.go) includes Ethereum, Base, BNB Chain (`binance`), Polygon, Arbitrum One, Optimism, Arc, Monad, Avalanche C-Chain, HyperEVM, Plasma, Morph, Robinhood Chain, TON, TRON and the UniSat Bitcoin indexer. The five TRON IP endpoints use Wallet gRPC on TCP port 50051. UniSat reports the indexed Bitcoin mainnet height and appears with `scannable:false`.
+The [built-in catalog](internal/nodes/catalog.go) includes Ethereum, Base, BNB Chain (`binance`), Polygon, Arbitrum One, Optimism, Arc, Monad, Avalanche C-Chain, HyperEVM, Plasma, Morph, Robinhood Chain, TON, TRON and the UniSat Bitcoin indexer. The five TRON IP endpoints use Wallet gRPC on TCP port 50051. UniSat reports the indexed Bitcoin mainnet height and appears with `scannable:false`.
 
 To scan from the catalog, set a network entry such as `{"name":"base","confirmations":3}`. A configured URL, if present, takes priority at startup. A failed node rotates to the next candidate on retry. A removed active node is replaced at the next scan step. All candidates share the network's original cursor, confirmation policy and subscriptions. Enabling a network requires a `networks` entry. Adding nodes by API makes them available to that network. Operator-supplied header credentials and history credentials stay with their endpoint. Supply project-specific Infura, GetBlock and MonadInfra URLs through private runtime configuration.
