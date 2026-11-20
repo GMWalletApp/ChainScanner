@@ -235,11 +235,7 @@ func activityBytes(events []chains.Activity) int64 {
 	return size
 }
 
-type linkedReader interface {
-	ReadLinkedBlock(context.Context, int64, *chains.BlockLink) (int64, []chains.Activity, error)
-}
-
-func (p *SourcePool) fetch(ctx context.Context, n *endpoint, j *segment) error {
+func (p *SourcePool) fetch(ctx context.Context, n *endpoint, j *segment, oneRead bool) error {
 	call, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	required := j.to + max(n.cfg.Confirmations-1, 0)
@@ -255,34 +251,22 @@ func (p *SourcePool) fetch(ctx context.Context, n *endpoint, j *segment) error {
 	j.events = nil
 	j.first, j.last = chains.BlockLink{}, chains.BlockLink{}
 	for start := j.from; start <= j.to; {
-		var end int64
-		var rows []chains.Activity
-		var err error
-		if reader, ok := n.src.(linkedReader); ok && chains.IsEVM(p.network) {
-			var link chains.BlockLink
-			end, rows, err = reader.ReadLinkedBlock(call, start, &link)
-			if err == nil && (link.Hash == "" || (start > j.from && j.last.Hash != link.Parent)) {
-				return errors.New("inconsistent EVM block ancestry")
-			}
-			if start == j.from {
-				j.first = link
-			}
-			j.last = link
-		} else {
-			end, rows, err = n.src.Read(call, start, j.to)
-		}
+		part, link, rows, err := chains.ReadSpan(call, p.network, n.src, chains.Span{First: start, Last: j.to})
 		if err != nil {
 			return err
 		}
-		if end < start || end > j.to {
-			return errors.New("invalid node range")
+		if start == j.from {
+			j.first = link
+		} else if j.last.Hash != link.Parent {
+			return errors.New("inconsistent block ancestry")
 		}
-		for _, ev := range rows {
-			if ev.Height < start || ev.Height > end || (ev.Network != "" && ev.Network != p.network) {
-				return errors.New("event outside assigned network or range")
-			}
-		}
+		j.last = link
+		end := part.Last
 		j.events = append(j.events, rows...)
+		if oneRead {
+			j.to = end
+			break
+		}
 		start = end + 1
 	}
 	return nil
@@ -384,7 +368,7 @@ func (p *SourcePool) scan(ctx context.Context, next, head int64, maxRanges int, 
 			busy[worker.history()] = true
 			j.running = true
 			wg.Add(1)
-			go func() { defer wg.Done(); results <- completion{slot, worker, p.fetch(fetchCtx, worker, j)} }()
+			go func() { defer wg.Done(); results <- completion{slot, worker, p.fetch(fetchCtx, worker, j, false)} }()
 		}
 		if len(busy) == 0 {
 			return fmt.Errorf("no node could complete %s range %d..%d", p.network, jobs[front].from, jobs[front].to)
@@ -441,10 +425,138 @@ func (p *SourcePool) Read(ctx context.Context, next, head int64) (int64, []chain
 	var end int64
 	var events []chains.Activity
 	// Read collects all rows in one slice. Keep this compatibility API bounded;
-	// the scan worker uses Scan to stream the longer window.
+	// ordered callers can use Scan to stream the longer window.
 	err := p.scan(ctx, next, head, 4*parallelism, func(h int64, rows []chains.Activity) error { end = h; events = append(events, rows...); return nil })
 	if err != nil {
 		return 0, nil, err
 	}
 	return end, events, nil
+}
+
+// ScanWindow preserves the multi-node lookahead in units of durable work.
+func (p *SourcePool) ScanWindow() int {
+	var first string
+	for _, n := range p.nodes {
+		if p.now().Before(n.retry) {
+			continue
+		}
+		history := n.history()
+		if first == "" {
+			first = history
+			continue
+		}
+		if history == first {
+			continue
+		}
+		switch p.network {
+		case "aptos":
+			return reorderRanges // each page covers up to 100 versions
+		case "solana":
+			return 16 * reorderRanges
+		default:
+			return 4 * reorderRanges
+		}
+	}
+	return 16
+}
+
+// ScanPending serves the store's sparse work list. The legacy Scan/Read API
+// still returns contiguous data for callers that do not own a gap store.
+func (p *SourcePool) ScanPending(ctx context.Context, spans []chains.Span, finish func(chains.Span, chains.BlockLink, []chains.Activity, error) error) error {
+	defer p.trimConnections()
+	type task struct {
+		segment
+		tried map[*endpoint]bool
+	}
+	jobs := make([]task, len(spans))
+	for i, r := range spans {
+		jobs[i] = task{segment: segment{from: r.First, to: r.Last}, tried: map[*endpoint]bool{}}
+	}
+	calls, cancel := context.WithCancel(ctx)
+	var wg sync.WaitGroup
+	defer func() { cancel(); wg.Wait() }()
+	busy := map[string]bool{}
+	results := make(chan completion, parallelism)
+	for remaining := len(jobs); remaining > 0; {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		for i := range jobs {
+			if len(busy) >= parallelism {
+				break
+			}
+			j := &jobs[i]
+			if j.running || j.done {
+				continue
+			}
+			waiting := false
+			var node *endpoint
+			for k := range p.nodes {
+				// Bound per-span failover so one missing block cannot exhaust
+				// every discovered provider in the same round.
+				if len(j.tried) >= 3 {
+					break
+				}
+				index := (p.next + k) % len(p.nodes)
+				n := p.nodes[index]
+				if j.tried[n] || p.now().Before(n.retry) {
+					continue
+				}
+				if busy[n.history()] {
+					waiting = true
+					continue
+				}
+				node = n
+				p.next = (index + 1) % len(p.nodes)
+				break
+			}
+			if node == nil {
+				if waiting {
+					continue
+				}
+				failure := fmt.Errorf("no node could complete %s range %d..%d", p.network, j.from, j.to)
+				if err := finish(spans[i], chains.BlockLink{}, nil, failure); err != nil {
+					return err
+				}
+				j.done = true
+				remaining--
+				continue
+			}
+			busy[node.history()] = true
+			j.tried[node] = true
+			j.running = true
+			wg.Go(func() {
+				err := p.fetch(calls, node, &j.segment, true)
+				results <- completion{i, node, err}
+			})
+		}
+		if remaining == 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case result := <-results:
+			j := &jobs[result.slot]
+			delete(busy, result.node.history())
+			j.running = false
+			err := result.err
+			if err == nil {
+				link := chains.BlockLink{Hash: j.last.Hash, Parent: j.first.Parent}
+				err = finish(chains.Span{First: j.from, Last: j.to}, link, j.events, nil)
+				if err != nil && !errors.Is(err, chains.ErrFork) {
+					return err
+				}
+			}
+			p.record(result.node, true, err)
+			j.events = nil
+			if err == nil {
+				j.done = true
+				remaining--
+			} else {
+				j.to = spans[result.slot].Last
+			}
+		}
+	}
+	return nil
 }

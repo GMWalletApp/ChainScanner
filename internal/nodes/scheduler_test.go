@@ -101,43 +101,52 @@ func TestMixedProtocolsDispatchAndCommitWithoutBarrier(t *testing.T) {
 		initial[q.from] = q
 	}
 	for i, proto := range []string{"http", "grpc", "jsonrpc"} {
-		from := int64(100 + 4*i)
-		if q := initial[from]; q.node != proto || q.to != from+3 {
+		from := int64(100 + i)
+		if q := initial[from]; q.node != proto || q.to != from {
 			t.Fatalf("unexpected range %+v", q)
 		}
 	}
-	initial[108].reply <- nil
+	initial[102].reply <- nil
 	ahead := get()
-	if ahead.node != "jsonrpc" || ahead.from != 112 || ahead.to != 115 {
-		t.Fatalf("fast node waited or changed range: %+v", ahead)
+	if ahead.node != "jsonrpc" || ahead.from != 103 {
+		t.Fatalf("fast node waited: %+v", ahead)
 	}
-	initial[104].reply <- errors.New("unavailable")
+	first, e := store.Pending(ctx, "pay")
+	if e != nil || first == nil || first.Activity.Height != 102 {
+		t.Fatalf("102 not delivered across two holes: %+v %v", first, e)
+	}
+	if h, e := store.Height(ctx, "tron"); e != nil || h != 99 {
+		t.Fatal(h, e)
+	}
+	initial[101].reply <- errors.New("temporary read failure")
 	select {
 	case <-failed:
 	case <-ctx.Done():
-		t.Fatal("slow node blocked failover")
+		t.Fatal("no failure report")
 	}
 	initial[100].reply <- nil
-	retry := get()
-	if retry.node != "http" || retry.from != 104 || retry.to != 107 {
-		t.Fatalf("failed range: %+v", retry)
-	}
-	if h, e := store.Height(ctx, "tron"); e != nil || h != 103 {
-		t.Fatalf("cursor before gap: %d %v", h, e)
-	}
 	ahead.reply <- nil
-	retry.reply <- nil
+	// One outstanding request per lane. The failed block retries on another provider.
+	for remaining := 13; remaining > 0; remaining-- {
+		q := get()
+		if q.from == 101 && q.node == "grpc" {
+			t.Fatal("no failover")
+		}
+		q.reply <- nil
+	}
 	if err = <-done; err != nil {
 		t.Fatal(err)
 	}
 	if h, e := store.Height(ctx, "tron"); e != nil || h != 115 {
-		t.Fatalf("final cursor: %d %v", h, e)
+		t.Fatal(h, e)
 	}
-	for h := int64(100); h <= 115; h++ {
+	seen := map[int64]bool{}
+	for range 16 {
 		d, e := store.Pending(ctx, "pay")
-		if e != nil || d == nil || d.Activity.Height != h {
-			t.Fatalf("delivery at %d: %+v %v", h, d, e)
+		if e != nil || d == nil || d.Activity.Height < 100 || d.Activity.Height > 115 || seen[d.Activity.Height] {
+			t.Fatalf("unexpected delivery %+v %v", d, e)
 		}
+		seen[d.Activity.Height] = true
 		if e = store.Ack(ctx, "pay", d.ID); e != nil {
 			t.Fatal(e)
 		}
