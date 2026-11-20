@@ -170,3 +170,38 @@ func TestAptosGapStopsCursor(t *testing.T) {
 		t.Fatal("accepted noncontiguous ledger")
 	}
 }
+
+func TestDatabaseRejectsSecondScanner(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	one, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer one.Close()
+	other, err := Open(path)
+	if err == nil {
+		other.Close()
+		t.Fatal("two live scanners acquired the same database")
+	}
+}
+
+func TestConcurrentStepsReadBlockOnce(t *testing.T) {
+	s, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	src := &chain{height: 100}
+	done := make(chan error, 8)
+	for range 8 {
+		go func() { _, err := s.Step(context.Background(), Network{Name: "ethereum"}, src); done <- err }()
+	}
+	for range 8 {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if src.reads != 1 {
+		t.Fatalf("read the same height %d times", src.reads)
+	}
+}

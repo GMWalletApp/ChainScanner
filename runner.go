@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 )
 
@@ -26,6 +27,13 @@ type Network struct {
 
 // Step commits the full batch and every matching delivery atomically.
 func (s *Store) Step(ctx context.Context, n Network, source Source) (bool, error) {
+	lock, _ := s.workers.LoadOrStore(n.Name, new(sync.Mutex))
+	worker := lock.(*sync.Mutex)
+	worker.Lock()
+	defer worker.Unlock()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	latest, err := source.Head(ctx)
 	if err != nil {
 		return false, err

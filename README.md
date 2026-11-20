@@ -4,7 +4,7 @@ ChainScanner follows confirmed transaction activity once per configured network 
 
 ## Run
 
-With Go 1.25 or later, run `go build ./cmd/chainscanner`, then `./chainscanner -config chainscanner.json`. Use one scanner process per database. Keep the SQLite database and its WAL on persistent storage. Bind to loopback or put the API behind TLS. Set each consumer's token to a separate randomly generated secret, for example the output of `openssl rand -hex 32`.
+With Go 1.25 or later, run `go build ./cmd/chainscanner`, then `./chainscanner -config chainscanner.json`. One scanner process owns the database exclusively. Other services connect to its HTTP API. Keep the SQLite database and its WAL on persistent storage. Bind to loopback or put the API behind TLS. Set each consumer's token to a separate randomly generated secret, for example the output of `openssl rand -hex 32`.
 
 ```json
 {

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	_ "modernc.org/sqlite"
 )
@@ -33,7 +34,10 @@ type Delivery struct {
 	ID       int64    `json:"id"`
 	Activity Activity `json:"activity"`
 }
-type Store struct{ db *sql.DB }
+type Store struct {
+	db      *sql.DB
+	workers sync.Map
+}
 
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
@@ -41,7 +45,8 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	_, err = db.Exec(`PRAGMA journal_mode=WAL;
+	_, err = db.Exec(`PRAGMA locking_mode=EXCLUSIVE;
+ PRAGMA journal_mode=WAL;
  PRAGMA busy_timeout=5000;
  CREATE TABLE IF NOT EXISTS watches(consumer TEXT NOT NULL, network TEXT NOT NULL, address TEXT NOT NULL, PRIMARY KEY(consumer,network,address));
  CREATE INDEX IF NOT EXISTS by_address ON watches(network,address);
@@ -52,7 +57,7 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db}, nil
+	return &Store{db: db}, nil
 }
 func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) Subscribe(ctx context.Context, consumer string, watches []Watch) error {
