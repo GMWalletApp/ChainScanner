@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -159,6 +160,9 @@ func (r *NodeRegistry) List(ctx context.Context, network string) ([]Node, error)
 }
 func (r *NodeRegistry) visible(n Node) bool {
 	_, configured := r.configured[n.NodeEndpoint]
+	if n.Origin == "builtin" && !configured {
+		return slices.Contains(builtinNodes, n.NodeEndpoint)
+	}
 	return n.Origin != "config" || configured
 }
 func (r *NodeRegistry) get(ctx context.Context, id int64) (Node, error) {
