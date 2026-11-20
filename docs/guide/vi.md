@@ -105,7 +105,7 @@ flowchart LR
 
 Nếu thiếu khối 101, dịch vụ vẫn có thể nhận hoạt động từ 102 và 103. API độ cao giữ ở 100 cho đến khi hoàn tất 101. Đăng ký mới bắt đầu sau độ cao cao nhất đã phân công, nên các khoảng thiếu cũ vẫn giữ ranh giới đăng ký ban đầu.
 
-Mỗi mạng dùng đồng thời tối đa 8 đầu cuối lịch sử riêng, tối đa 32 tác vụ mỗi vòng. Nếu yêu cầu cũ nhất đã chạy 10 giây, tác vụ sau đã xong và còn nút rảnh, yêu cầu đó có thể chuyển nút một lần. Các giao thức dùng chung URL lịch sử sẽ đọc luân phiên.
+Mỗi mạng giữ tối đa 32 khoảng đang chờ và dùng đồng thời tối đa 8 nút lịch sử khác nhau. Khi có thông báo hoặc đến kỳ thăm dò, bộ điều phối kiểm tra độ cao và độ trễ của nút. Để quét khoảng kết thúc tại B, độ cao mới đo phải đạt ít nhất B + số lần xác nhận − 1. Với bốn lần xác nhận, nút ở độ cao 105 có thể quét đến 102. Nếu kết quả đo đã cũ, nút được kiểm tra lại. Nút chậm hơn vẫn có thể bù các khối cũ. Khi một yêu cầu hoàn tất, nút rảnh có thể quét khối mới dù yêu cầu trước vẫn đang chạy. Khi có lỗi hoặc hết thời gian chờ, một nút đủ điều kiện khác sẽ thử lại. Các giao thức dùng chung URL lịch sử đọc luân phiên.
 
 Cứ ba lần lỗi liên tiếp của cùng thao tác, nút tạm nghỉ lần lượt 1, 3, 6, 10, 15 phút và tăng dần, tối đa một giờ. Đọc độ cao thành công chỉ xóa chuỗi lỗi độ cao; đọc thành công một khoảng xóa cả hai chuỗi.
 

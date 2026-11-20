@@ -105,7 +105,11 @@ The first watch starts the network worker. The last removal stops its reads and 
 
 If block 101 is missing, activity in 102 and 103 can already reach consumers. The height API stays at 100 until 101 completes. A new subscription starts after the highest assigned height, so earlier gaps retain their original subscriber boundaries.
 
-Up to 8 distinct history endpoints work concurrently per network, with up to 32 tasks per round. If the oldest request has taken 10 seconds, later work has finished and another backend is idle, it can be reassigned once. Paired transports sharing a history URL take turns.
+Each network keeps up to 32 outstanding ranges and uses up to eight distinct history endpoints. A stream signal or poll triggers a head check on a free lane. Its height and latency also update health for direct endpoints. A node can read a range ending at height B when its recent head is at least B + confirmations − 1. With four confirmations a node at 105 can scan through 102, while a node at 106 can scan through 103. Unknown or stale nodes receive a probe first. Lower nodes can repair earlier gaps.
+
+Each completion frees a lane for more work, including newly confirmed blocks while an older request is still running. Errors and deadlines trigger retries on another eligible provider. Shared history URLs take turns. Solana reuses a list of up to 16 finalized slots per history source and keeps block reads and delivery independent.
+
+In the source tree, `internal/nodes/live.go` owns the watch-period queue, `health.go` shares head observations, and `worker.go` handles provider reads. `internal/engine` reserves gaps and commits matching deliveries. `internal/feed` exposes the HTTP, WebSocket and gRPC interfaces.
 
 Every three consecutive failures of the same operation trigger a cooldown of 1, 3, 6, 10, 15 minutes and so on, capped at one hour. A successful height check resets only height failures; reading a range successfully resets both streaks.
 

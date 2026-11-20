@@ -105,7 +105,7 @@ La primera suscripción inicia el lector de la red. Al quitar la última, se det
 
 Si falta el bloque 101, los consumidores ya pueden recibir actividad de 102 y 103. La API de altura permanece en 100 hasta completar 101. Una suscripción nueva comienza después de la mayor altura asignada y respeta los límites de las suscripciones anteriores.
 
-Por red trabajan hasta 8 endpoints históricos distintos y se asignan hasta 32 tareas por ronda. Si la solicitud más antigua lleva 10 segundos, ya terminó trabajo posterior y hay otro nodo libre, puede reasignarse una vez. Las interfaces con la misma URL histórica se turnan.
+Cada red mantiene hasta 32 rangos pendientes y usa hasta 8 nodos históricos distintos en paralelo. Una notificación o un sondeo comprueba la altura y la latencia del nodo. Un rango que termina en B exige una altura reciente de al menos B + confirmaciones − 1. Con cuatro confirmaciones, un nodo en 105 puede leer hasta 102. Si la observación caducó, se vuelve a consultar el nodo. Los nodos atrasados pueden cubrir huecos anteriores. Cada respuesta libera capacidad para bloques nuevos mientras siguen las lecturas lentas. Los errores y los tiempos de espera provocan un reintento en otro nodo apto. Las interfaces con la misma URL histórica se turnan.
 
 Cada tres fallos consecutivos de la misma operación, el nodo entra en pausa durante 1, 3, 6, 10, 15 minutos y así sucesivamente, hasta una hora. Una consulta de altura correcta reinicia solo su contador; una lectura correcta de rango reinicia ambos.
 
