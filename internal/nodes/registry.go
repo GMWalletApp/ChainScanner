@@ -111,7 +111,7 @@ func NewNodeRegistry(ctx context.Context, s *engine.Store, networks []chains.Net
 }
 
 const seedNode = `INSERT INTO rpc_nodes(network,protocol,url,origin) VALUES(?,?,?,?)
-ON CONFLICT(network,protocol,url) DO UPDATE SET origin=excluded.origin WHERE origin='chainlist'`
+ON CONFLICT(network,protocol,url) DO UPDATE SET origin=excluded.origin WHERE origin IN ('chainlist','openchainbench') OR (origin='config' AND excluded.origin='builtin')`
 const nodeFields = `id,network,protocol,url,origin,status,height,checked_at,latency,generation,api_key,history_url,history_key`
 
 func (r *NodeRegistry) scan(row interface{ Scan(...any) error }) (Node, error) {
@@ -124,7 +124,7 @@ func (r *NodeRegistry) scan(row interface{ Scan(...any) error }) (Node, error) {
 			n.ReadRetryAt = f.retry.UnixMilli()
 		}
 	}
-	n.Scannable = chains.Supported(n.Network)
+	n.Scannable = chains.Supported(n.Network) && !slices.Contains(heightOnlyNodes, n.NodeEndpoint.identity())
 	switch {
 	case n.Protocol == "sse":
 		n.HeightUnit = "beacon_slot"
@@ -195,7 +195,7 @@ func (r *NodeRegistry) add(ctx context.Context, options NodeOptions, fallback bo
 		return Node{}, errInvalidNode
 	}
 	if e.Network == "bitcoin" {
-		if u.Hostname() == "" || options.HistoryURL != "" || options.HistoryAPIKey != "" || e.Protocol != "unisat" || (u.Scheme != "https" && u.Scheme != "http") {
+		if u.Hostname() == "" || options.HistoryURL != "" || options.HistoryAPIKey != "" || (e.Protocol != "unisat" && e.Protocol != "jsonrpc") || (u.Scheme != "https" && u.Scheme != "http") {
 			return Node{}, errInvalidNode
 		}
 	} else {
@@ -279,6 +279,8 @@ func (r *NodeRegistry) network(n Node, settings chains.Network) chains.Network {
 	if configured, ok := r.configured[n.NodeEndpoint]; ok {
 		src = configured
 		src.Protocol = n.Protocol
+	} else if n.Origin == "builtin" && src.HistoryURL == "" {
+		src.HistoryURL = builtinHistory[n.NodeEndpoint]
 	}
 	src.Confirmations = settings.Confirmations
 	src.Lookback = settings.Lookback
@@ -288,7 +290,7 @@ func (r *NodeRegistry) network(n Node, settings chains.Network) chains.Network {
 }
 
 func openNode(ctx context.Context, n Node, network chains.Network) (chains.Source, error) {
-	if n.Origin == "chainlist" {
+	if n.Origin == "chainlist" || n.Origin == "openchainbench" {
 		return chains.NewPublicSource(ctx, network)
 	}
 	return chains.NewSource(ctx, network)
@@ -314,7 +316,9 @@ func (r *NodeRegistry) Test(ctx context.Context, id int64) (Node, error) {
 	defer cancel()
 	src := r.network(n, chains.Network{})
 	var height int64
-	if n.Protocol == "unisat" {
+	if n.Network == "bitcoin" && n.Protocol == "jsonrpc" {
+		height, err = chains.BitcoinRPCHeight(probe, src)
+	} else if n.Protocol == "unisat" {
 		height, err = chains.UniSatHeight(probe, src)
 	} else {
 		var s chains.Source
