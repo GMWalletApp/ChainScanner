@@ -44,6 +44,16 @@ type NodeRegistry struct {
 
 func NewNodeRegistry(ctx context.Context, s *Store, networks []Network) (*NodeRegistry, error) {
 	r := &NodeRegistry{store: s, configured: map[NodeEndpoint]Network{}, slots: make(chan struct{}, 8)}
+	enabled := map[string]Network{}
+	for _, n := range networks {
+		if !Supported(n.Name) {
+			return nil, errors.New("node requires a concrete supported network")
+		}
+		if _, ok := enabled[n.Name]; ok {
+			return nil, errors.New("duplicate network")
+		}
+		enabled[n.Name] = n
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -78,7 +88,32 @@ func NewNodeRegistry(ctx context.Context, s *Store, networks []Network) (*NodeRe
 			return nil, err
 		}
 	}
-	return r, tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	s.configured = enabled
+	s.resolve = func(ctx context.Context, name string) (int64, error) {
+		n, ok := enabled[name]
+		if !ok {
+			return 0, ErrNetworkNotConfigured
+		}
+		pool := &nodePool{registry: r, settings: n, lifetime: ctx}
+		defer pool.Close()
+		attempted := map[int64]bool{}
+		for ctx.Err() == nil {
+			tip, e := pool.Head(ctx)
+			if e == nil {
+				return activationCursor(tip, n), nil
+			}
+			if pool.id == 0 || attempted[pool.id] {
+				return 0, e
+			}
+			attempted[pool.id] = true
+			pool.Close()
+		}
+		return 0, ctx.Err()
+	}
+	return r, nil
 }
 
 const seedNode = `INSERT INTO rpc_nodes(network,protocol,url,origin) VALUES(?,?,?,?)

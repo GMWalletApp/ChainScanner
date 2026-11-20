@@ -9,11 +9,14 @@ import (
 
 // Run uses one source and one durable cursor for the configured network.
 func (r *NodeRegistry) Run(ctx context.Context, n Network) {
-	pool := &nodePool{registry: r, settings: n}
-	r.store.run(ctx, n, func(context.Context, Network) (Source, error) { return pool, nil })
+	r.store.WhileWatched(ctx, n.Name, func(live context.Context) {
+		pool := &nodePool{registry: r, settings: n, lifetime: live}
+		r.store.run(live, n, func(context.Context, Network) (Source, error) { return pool, nil })
+	})
 }
 
 type nodePool struct {
+	lifetime context.Context
 	registry *NodeRegistry
 	settings Network
 	active   Source
@@ -51,7 +54,11 @@ func (p *nodePool) Head(ctx context.Context) (int64, error) {
 			n := nodes[next]
 			p.id = n.ID
 			endpoint := p.registry.network(n, p.settings)
-			p.active, err = NewSource(ctx, endpoint)
+			live := p.lifetime
+			if live == nil {
+				live = ctx
+			}
+			p.active, err = NewSource(live, endpoint)
 			if err != nil {
 				return 0, errors.New("cannot open scan node")
 			}

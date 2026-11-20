@@ -178,6 +178,9 @@ func TestNodePoolKeepsCursorOnProviderChange(t *testing.T) {
 			}
 		}
 	}
+	if err = store.Subscribe(ctx, "pay", []Watch{{"base", wallet}}); err != nil {
+		t.Fatal(err)
+	}
 	p := &nodePool{registry: r, settings: settings}
 	defer p.Close()
 	if _, err = store.Step(ctx, settings, p); err != nil {

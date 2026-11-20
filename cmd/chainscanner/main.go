@@ -39,7 +39,7 @@ func run() error {
 		c.Listen = "127.0.0.1:9081"
 	}
 	if c.Database == "" {
-		c.Database = "chainscanner.sqlite"
+		c.Database = ":memory:"
 	}
 	seen := map[string]bool{}
 	for _, n := range c.Networks {
