@@ -97,3 +97,21 @@ For a paired interface, set `history_url` and, if needed, `history_api_key`. Eac
 ```
 
 Protocol references include [Ethereum execution RPC](https://geth.ethereum.org/docs/interacting-with-geth/rpc), [Geth GraphQL](https://geth.ethereum.org/docs/interacting-with-geth/rpc/graphql), [Beacon events](https://ethereum.github.io/beacon-APIs/#/Events/eventstream), [TRON Wallet](https://developers.tron.network/reference/full-node-api-overview), [Solana PubSub](https://solana.com/docs/rpc/websocket), [Yellowstone](https://github.com/rpcpool/yellowstone-grpc), [Sui data APIs](https://docs.sui.io/develop/accessing-data), [Aptos indexing](https://aptos.dev/build/indexer) and [TON Center block BOCs](https://docs.ton.org/api/v2/rpc/get-block).
+
+## Node administration
+
+Set `admin_token` in the standalone server's JSON configuration to a random secret of at least 24 bytes, distinct from every consumer token. Send it as a bearer token to the following endpoints. The admin routes are disabled when the token is omitted. Anyone holding this token can choose RPC destinations. Protect it and the scanner database.
+
+| Method | Path | Result |
+| --- | --- | --- |
+| GET | `/v1/admin/nodes` | Inventory with stable IDs, network, protocol, URL, origin and last test result. Add `?network=base` to filter. |
+| POST | `/v1/admin/nodes/test` | Refresh all heights or one network with the same filter. Returns individual results, including failures. |
+| POST | `/v1/admin/nodes/{id}/test` | Fetch this node's current head and persist the result. |
+| POST | `/v1/admin/nodes` | Add a node with `{"network":"base","protocol":"http","url":"https://your-base-node.example"}`. Returns 201, or 409 for an existing entry. Optional fields are `api_key`, `history_url` and `history_api_key`. Paired protocols require a history URL. |
+| DELETE | `/v1/admin/nodes/{id}` | Remove a node, including a built-in or configured node. Returns 204. Deletion survives restart. Posting the endpoint again restores it. |
+
+A test returns `height`, `height_unit`, `status`, `checked_at_ms` (Unix time) and `latency_ms`. The status is `untested`, `ok`, `timeout` or `unavailable`. Unsuccessful observations have a null height. The batch tests up to eight nodes at once, with one batch active per process. GET reads the stored results without spending RPC quota. The separate consumer heights endpoint reports the durable scan cursor. For Beacon SSE the primary observation is a beacon slot. For Aptos it is a ledger version, for Sui a checkpoint, and for Solana a slot.
+
+The [built-in catalog](nodes_builtin.go) includes Ethereum, Base, BNB Chain (`binance`), Polygon, Arbitrum One, Optimism, Arc, Monad, Avalanche C-Chain, HyperEVM, Plasma, Morph, Robinhood Chain, TON, TRON and the UniSat Bitcoin indexer. The five TRON IP endpoints use Wallet gRPC on TCP port 50051. UniSat reports the indexed Bitcoin mainnet height and appears with `scannable:false`.
+
+To scan from the catalog, set a network entry such as `{"name":"base","confirmations":3}`. A configured URL, if present, takes priority at startup. A failed node rotates to the next candidate on retry. A removed active node is replaced at the next scan step. All candidates share the network's original cursor, confirmation policy and subscriptions. Enabling a network requires a `networks` entry. Adding nodes by API makes them available to that network. Operator-supplied header credentials and history credentials stay with their endpoint.

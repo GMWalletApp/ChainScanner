@@ -77,6 +77,9 @@ func (s *Store) Step(ctx context.Context, n Network, source Source) (bool, error
 	return end < head, nil
 }
 func (s *Store) Run(ctx context.Context, n Network) {
+	s.run(ctx, n, NewSource)
+}
+func (s *Store) run(ctx context.Context, n Network, open func(context.Context, Network) (Source, error)) {
 	var src Source
 	defer func() {
 		if src != nil {
@@ -86,7 +89,7 @@ func (s *Store) Run(ctx context.Context, n Network) {
 	for ctx.Err() == nil {
 		var err error
 		if src == nil {
-			src, err = NewSource(ctx, n)
+			src, err = open(ctx, n)
 		}
 		var behind bool
 		if err == nil {
