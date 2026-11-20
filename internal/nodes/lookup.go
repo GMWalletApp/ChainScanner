@@ -82,7 +82,7 @@ func (r *NodeRegistry) lookupCandidates(ctx context.Context, network string) ([]
 		if !ok {
 			continue
 		}
-		candidates = append(candidates, lookupCandidate{healthy: n.Status == "ok" && n.CheckedAt != nil && now.Sub(time.UnixMilli(*n.CheckedAt)) < time.Minute, cfg: cfg, public: n.Origin == "chainlist" || n.Origin == "openchainbench", version: n.version(), key: providerKey(cfg)})
+		candidates = append(candidates, lookupCandidate{healthy: n.Status == "ok" && n.CheckedAt != nil && now.Sub(time.UnixMilli(*n.CheckedAt)) < time.Minute, cfg: cfg, public: isDiscoveryOrigin(n.Origin), version: n.version(), key: providerKey(cfg)})
 	}
 	rand.Shuffle(len(candidates), func(i, j int) { candidates[i], candidates[j] = candidates[j], candidates[i] })
 
