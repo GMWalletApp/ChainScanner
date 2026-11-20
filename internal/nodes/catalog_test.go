@@ -2,6 +2,7 @@ package nodes
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -107,5 +108,58 @@ func TestPublicNodeHistoryLane(t *testing.T) {
 	}
 	if historyLane("base", "wss://other.example") == historyLane("base", "https://other.example") {
 		t.Fatal("changed custom routes")
+	}
+}
+
+func TestBuiltinUpgradeReusesEquivalentRows(t *testing.T) {
+	ctx := context.Background()
+	store, err := engine.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err = NewNodeRegistry(ctx, store, nil); err != nil {
+		t.Fatal(err)
+	}
+	db := engine.Database(store)
+	const base = "https://base-rpc.publicnode.com"
+	var id int64
+	if err = db.QueryRow(`INSERT INTO rpc_nodes(network,protocol,url,origin,api_key) VALUES('base','jsonrpc','https://BASE-RPC.PUBLICNODE.COM:443/','custom','operator-key') RETURNING id`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	// A pre-existing deletion with a different spelling must suppress the default.
+	if _, err = db.Exec(`UPDATE rpc_nodes SET removed=1,url='wss://BASE-RPC.PUBLICNODE.COM:443/' WHERE network='base' AND url='wss://base-rpc.publicnode.com'`); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		r, err := NewNodeRegistry(ctx, store, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows, err := r.List(ctx, "base")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var count int
+		for _, row := range rows {
+			switch row.NodeEndpoint.identity() {
+			case (NodeEndpoint{"base", "http", base}):
+				count++
+				if row.ID != id || row.Origin != "custom" || row.options.APIKey != "operator-key" {
+					t.Fatal("changed operator entry", row.ID, row.Origin)
+				}
+			case (NodeEndpoint{"base", "ws", "wss://base-rpc.publicnode.com"}):
+				t.Fatal("resurrected deleted entry")
+			}
+		}
+		if count != 1 {
+			t.Fatal("HTTP count", count)
+		}
+		if _, err = r.Add(ctx, NodeOptions{NodeEndpoint: NodeEndpoint{"base", "http", base}}); !errors.Is(err, errDuplicateNode) {
+			t.Fatal("added alias", err)
+		}
+		if _, err = r.applyCatalog(ctx, "chainlist", "", []observation{{endpoint: NodeEndpoint{"base", "http", base}, height: 123}}); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

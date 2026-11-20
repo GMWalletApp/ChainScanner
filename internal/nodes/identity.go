@@ -35,9 +35,11 @@ func canonicalNodeURL(raw string) string {
 }
 
 func (e NodeEndpoint) identity() NodeEndpoint {
-	if e.Network == "sui" && e.Protocol == "grpc" {
+	if e.Protocol == "grpc" || e.Protocol == "solidity-grpc" {
 		if host, ok := strings.CutPrefix(e.URL, "grpcs://"); ok {
 			e.URL = "https://" + host
+		} else if host, ok := strings.CutPrefix(e.URL, "grpc://"); ok {
+			e.URL = "http://" + host
 		}
 	}
 	e.URL = canonicalNodeURL(e.URL)
