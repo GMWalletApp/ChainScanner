@@ -8,11 +8,15 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/tidwall/gjson"
 	"golang.org/x/sync/errgroup"
 )
 
-func (s *jsonSource) evm(ctx context.Context, h int64) (int64, []Activity, error) {
+// BlockLink identifies the exact EVM block whose transactions were decoded.
+type BlockLink struct{ Hash, Parent string }
+
+func (s *jsonSource) ReadLinkedBlock(ctx context.Context, h int64, link *BlockLink) (int64, []Activity, error) {
 	label := fmt.Sprintf("0x%x", h)
 	block, err := s.call(ctx, "eth_getBlockByNumber", label, true)
 	if err != nil {
@@ -27,6 +31,9 @@ func (s *jsonSource) evm(ctx context.Context, h int64) (int64, []Activity, error
 	}
 	byHash := map[string][]gjson.Result{}
 	blockHash := block.Get("hash").String()
+	if link != nil {
+		*link = BlockLink{Hash: blockHash, Parent: block.Get("parentHash").String()}
+	}
 	receipts := map[string]gjson.Result{}
 	readReceipts := func() error {
 		rows, err := s.call(ctx, "eth_getBlockReceipts", label)
@@ -49,13 +56,26 @@ func (s *jsonSource) evm(ctx context.Context, h int64) (int64, []Activity, error
 	}
 	// Whole-block receipts supply both log evidence and transaction status.
 	// Providers without this method can still serve individual receipts.
-	if NativeAsset(s.n.Name) == "" || readReceipts() != nil {
+	attemptedReceipts := NativeAsset(s.n.Name) != ""
+	var receiptErr error
+	if attemptedReceipts {
+		receiptErr = readReceipts()
+		var status rpc.HTTPError
+		if errors.As(receiptErr, &status) && status.StatusCode == 429 {
+			return 0, nil, receiptErr
+		}
+	}
+	if !attemptedReceipts || receiptErr != nil {
 		clear(receipts)
 		clear(byHash)
 		logs, err := s.call(ctx, "eth_getLogs", map[string]string{"blockHash": blockHash})
 		if err != nil {
-			if retry := readReceipts(); retry != nil {
-				return 0, nil, fmt.Errorf("block logs: %w; receipts: %v", err, retry)
+			var status rpc.HTTPError
+			if attemptedReceipts || (errors.As(err, &status) && status.StatusCode == 429) {
+				return 0, nil, err
+			}
+			if err = readReceipts(); err != nil {
+				return 0, nil, err
 			}
 		} else {
 			if !logs.IsArray() {
@@ -143,12 +163,12 @@ func traceAddresses(a *[]string, n string, t gjson.Result) {
 func (s *jsonSource) evmRange(ctx context.Context, start, head int64) (int64, []Activity, error) {
 	end := min(head, start+3)
 	if end == start {
-		return s.evm(ctx, start)
+		return s.ReadLinkedBlock(ctx, start, nil)
 	}
 	group, ctx := errgroup.WithContext(ctx)
 	blocks := make([][]Activity, end-start+1)
 	for h := start; h <= end; h++ {
-		group.Go(func() error { _, events, err := s.evm(ctx, h); blocks[h-start] = events; return err })
+		group.Go(func() error { _, events, err := s.ReadLinkedBlock(ctx, h, nil); blocks[h-start] = events; return err })
 	}
 	if err := group.Wait(); err != nil {
 		return 0, nil, err

@@ -90,7 +90,17 @@ Sui events include successful and failed transactions, senders, sponsors, balanc
 
 `from_height` is inclusive. For a newly registered address it is the scanner's last committed height plus one, even if the provider is ahead or a block is being read. Unchanged addresses retain their boundary within the current session and across restarts in file-backed mode. Unsubscribe then re-register to start a new interval. A cold v2 registration queries the configured node before returning its inclusive start height. A 409 means that a boundary could not be established; the previous subscription set stays in force. V1 can register interest before a worker is ready. Only configured networks have workers. Retry after the node is ready. Existing v1 subscriptions from before this upgrade receive a conservative boundary on their first receipt; previously queued deliveries remain available. Aptos heights are ledger versions, Solana heights are slots, and Sui heights are checkpoint numbers.
 
-Use `GET /v2/events/next?network=arbitrum&wait=15` for independent per-network consumption and acknowledge each delivery on the existing v1 endpoint. Waits of 1–20 seconds park outside the database and wake on commit. Run one consumer worker per network and token, or use the global v1 queue. EVM catch-up concurrently reads up to four blocks and commits them in height order. The in-memory address index is refreshed when membership changes. Both cursor and outbox still use the same SQLite transaction. No additional broker or database is required.
+Use `GET /v2/events/next?network=arbitrum&wait=15` for independent per-network consumption and acknowledge each delivery on the existing v1 endpoint. Waits of 1–20 seconds park outside the database and wake on commit. Run one consumer worker per network and token, or use the global v1 queue. The in-memory address index is refreshed when membership changes. Both cursor and outbox still use the same SQLite transaction. No additional broker or database is required.
+
+## Multi-node scheduling
+
+Register each endpoint under its concrete network. The standalone registry and embedded payment worker share a round-robin scheduler. Up to four endpoints fetch disjoint ranges concurrently using any supported mix of protocols. Transports paired to the same history URL take turns using it. Each endpoint keeps its connection while healthy. An empty watch list stops that network's worker.
+
+For example, three nodes can fetch heights 100–103, 104–107 and 108–111. If the third finishes first, it can fetch 112–115 while the middle request is outstanding. A failed range goes back to the front of the queue for a different node. Each adapter decodes its results on arrival. The scanner publishes only the contiguous prefix and commits each range together with its deliveries. An unrecoverable gap leaves the cursor on the last complete range. A restart resumes from that cursor in file-backed mode.
+
+The maximum range is four blocks, 16 finalized Solana slots or 100 Aptos ledger versions. EVM log requests cover a single block hash. The reorder buffer holds at most two ranges per active lane (eight total). Once it fills, workers wait for the oldest gap to avoid unbounded memory use. Adjacent EVM ranges must agree on their parent hash within a live watch period.
+
+After three failed height checks or three failed range reads, an endpoint cools down for 60 seconds. A successful height check does not clear block-read failures. The next eligible request after cooldown tests the endpoint again. A failed recovery request starts another cooldown. Requests stop when all endpoints are cooling down and resume on a subsequent scan tick. Provider account quotas may be shared across different URLs.
 
 ## Node protocols
 
@@ -129,7 +139,7 @@ A test returns `height`, `height_unit`, `status`, `checked_at_ms` (Unix time) an
 
 The [built-in catalog](internal/nodes/catalog.go) includes Ethereum, Base, BNB Chain (`binance`), Polygon, Arbitrum One, Optimism, Arc, Monad, Avalanche C-Chain, HyperEVM, Plasma, Morph, Robinhood Chain, TON, TRON and the UniSat Bitcoin indexer. The five TRON IP endpoints use Wallet gRPC on TCP port 50051. UniSat reports the indexed Bitcoin mainnet height and appears with `scannable:false`.
 
-To scan from the catalog, set a network entry such as `{"name":"base","confirmations":3}`. A configured URL, if present, takes priority at startup. A failed node rotates to the next candidate on retry. A removed active node is replaced at the next scan step. All candidates share the network's original cursor, confirmation policy and subscriptions. Enabling a network requires a `networks` entry. Adding nodes by API makes them available to that network. Operator-supplied header credentials and history credentials stay with their endpoint. Supply project-specific Infura, GetBlock and MonadInfra URLs through private runtime configuration.
+To scan from the catalog, set a network entry such as `{"name":"base","confirmations":3}`. A configured URL, if present, takes priority at startup. A removed active node is replaced at the next scan step. All candidates share the network's original cursor, confirmation policy and subscriptions. Enabling a network requires a `networks` entry. Adding nodes by API makes them available to that network. Operator-supplied header credentials and history credentials stay with their endpoint. Supply project-specific Infura, GetBlock and MonadInfra URLs through private runtime configuration.
 
 ### Hourly ChainList discovery
 

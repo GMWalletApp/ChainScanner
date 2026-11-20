@@ -100,21 +100,13 @@ func NewNodeRegistry(ctx context.Context, s *engine.Store, networks []chains.Net
 		if !ok {
 			return 0, engine.ErrNetworkNotConfigured
 		}
-		pool := &nodePool{registry: r, settings: n, lifetime: ctx}
+		pool := newRegistryPool(ctx, r, n)
 		defer pool.Close()
-		attempted := map[int64]bool{}
-		for ctx.Err() == nil {
-			tip, e := pool.Head(ctx)
-			if e == nil {
-				return engine.ActivationCursor(tip, n), nil
-			}
-			if pool.id == 0 || attempted[pool.id] {
-				return 0, e
-			}
-			attempted[pool.id] = true
-			pool.Close()
+		tip, err := pool.Head(ctx)
+		if err != nil {
+			return 0, err
 		}
-		return 0, ctx.Err()
+		return engine.ActivationCursor(tip, n), nil
 	})
 	return r, nil
 }

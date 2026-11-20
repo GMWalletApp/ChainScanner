@@ -8,6 +8,9 @@ import (
 // Wakeups coalesces tip notifications. The persisted cursor determines the next
 // read even when a stream drops notifications or reconnects after an outage.
 func Wakeups(s Source) <-chan struct{} {
+	if v, ok := s.(interface{ Wakeups() <-chan struct{} }); ok {
+		return v.Wakeups()
+	}
 	if v, ok := s.(interface{ wakeups() <-chan struct{} }); ok {
 		return v.wakeups()
 	}

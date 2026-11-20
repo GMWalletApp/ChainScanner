@@ -58,7 +58,10 @@ func (s *graphSource) Read(ctx context.Context, h, head int64) (int64, []Activit
 	if s.n.Name == "sui" {
 		return s.suiCheckpoint(ctx, h)
 	}
-	const q = `query($height:Long!){block(number:$height){number hash timestamp transactionCount transactions{hash from{address} to{address} value inputData status index createdContract{address} logs{index account{address} topics data}}}}`
+	return s.ReadLinkedBlock(ctx, h, nil)
+}
+func (s *graphSource) ReadLinkedBlock(ctx context.Context, h int64, link *BlockLink) (int64, []Activity, error) {
+	const q = `query($height:Long!){block(number:$height){number hash parent{hash} timestamp transactionCount transactions{hash from{address} to{address} value inputData status index createdContract{address} logs{index account{address} topics data}}}}`
 	r, e := s.query(ctx, q, map[string]any{"height": fmt.Sprintf("0x%x", h)})
 	if e != nil {
 		return 0, nil, e
@@ -69,6 +72,9 @@ func (s *graphSource) Read(ctx context.Context, h, head int64) (int64, []Activit
 	count, e3 := strconv.ParseInt(b.Get("transactionCount").String(), 0, 64)
 	txs := b.Get("transactions")
 	hash := b.Get("hash").String()
+	if link != nil {
+		*link = BlockLink{Hash: hash, Parent: b.Get("parent.hash").String()}
+	}
 	if e1 != nil || e2 != nil || e3 != nil || number != h || hash == "" || !txs.IsArray() || int64(len(txs.Array())) != count {
 		return 0, nil, errors.New("incomplete execution GraphQL block")
 	}

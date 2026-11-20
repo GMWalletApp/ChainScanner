@@ -153,7 +153,7 @@ func TestNodePoolKeepsCursorOnProviderChange(t *testing.T) {
 			case "eth_blockNumber":
 				result = fmt.Sprintf("0x%x", head.Load())
 			case "eth_getBlockByNumber":
-				result = map[string]any{"number": req.Params[0], "hash": "0x123", "timestamp": "0x10", "transactions": []any{}}
+				result = map[string]any{"number": req.Params[0], "hash": "0x123", "parentHash": "0x123", "timestamp": "0x10", "transactions": []any{}}
 			case "eth_getBlockReceipts":
 				result = []any{}
 			default:
@@ -186,25 +186,25 @@ func TestNodePoolKeepsCursorOnProviderChange(t *testing.T) {
 	if err = store.Subscribe(ctx, "pay", []feed.Watch{{Network: "base", Address: wallet}}); err != nil {
 		t.Fatal(err)
 	}
-	p := &nodePool{registry: r, settings: settings}
+	p := newRegistryPool(ctx, r, settings)
 	defer p.Close()
 	if _, err = store.Step(ctx, settings, p); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = r.Add(ctx, NodeOptions{NodeEndpoint: NodeEndpoint{"base", "http", backup.URL}, APIKey: "backup-secret"}); err != nil {
+	added, err := r.Add(ctx, NodeOptions{NodeEndpoint: NodeEndpoint{"base", "http", backup.URL}, APIKey: "backup-secret"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	failPrimary.Store(true)
-	if _, err = store.Step(ctx, settings, p); err == nil {
-		t.Fatal("primary failure was ignored")
+	if _, err = store.Step(ctx, settings, p); err != nil {
+		t.Fatal("backup should serve the same step", err)
 	}
-	p.Close() // Run closes failed sources before retrying from the same cursor.
 	head.Store(43)
 	if _, err = store.Step(ctx, settings, p); err != nil {
 		t.Fatal(err)
 	}
 	failPrimary.Store(false)
-	if err = r.Delete(ctx, p.id); err != nil {
+	if err = r.Delete(ctx, added.ID); err != nil {
 		t.Fatal(err)
 	}
 	head.Store(44)

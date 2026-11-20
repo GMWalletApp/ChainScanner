@@ -28,6 +28,7 @@ type (
 	Feed         = feed.Feed
 	Client       = feed.Client
 
+	SourcePool   = nodes.SourcePool
 	NodeRegistry = nodes.NodeRegistry
 	Node         = nodes.Node
 	NodeOptions  = nodes.NodeOptions
@@ -55,6 +56,11 @@ func NewNodeRegistry(ctx context.Context, s *Store, networks []Network) (*NodeRe
 
 // NewSource opens the configured node using the network’s selected protocol.
 func NewSource(ctx context.Context, n Network) (Source, error) { return chains.NewSource(ctx, n) }
+
+// NewSourcePool distributes ranges across nodes of a single concrete network.
+func NewSourcePool(ctx context.Context, network string) *SourcePool {
+	return nodes.NewSourcePool(ctx, network)
+}
 
 // Wakeups returns a source’s optional channel of new head notifications.
 func Wakeups(s Source) <-chan struct{} { return chains.Wakeups(s) }
