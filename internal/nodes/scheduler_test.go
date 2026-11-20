@@ -83,7 +83,16 @@ func TestMixedProtocolsDispatchAndCommitWithoutBarrier(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	exited := make(chan struct{})
-	go func() { defer close(exited); _, e := store.Step(ctx, cfg[0], p); done <- e }()
+	go func() {
+		defer close(exited)
+		for {
+			behind, e := store.Step(ctx, cfg[0], p)
+			if e != nil || !behind {
+				done <- e
+				return
+			}
+		}
+	}()
 	defer func() { cancel(); <-exited; p.Close() }()
 	get := func() request {
 		t.Helper()
@@ -201,18 +210,37 @@ func TestReadCooldownSurvivesHeadRefreshAndReopens(t *testing.T) {
 		t.Fatal(calls)
 	}
 	now = now.Add(time.Minute)
-	if _, _, err := p.Read(ctx, 42, 42); err == nil || calls != 4 {
-		t.Fatal("failed probe did not run")
+	for _, cooldown := range []time.Duration{3 * time.Minute, 6 * time.Minute, 10 * time.Minute} {
+		for range 3 {
+			if _, err := p.Head(ctx); err != nil {
+				t.Fatal("height checks must not erase block-read penalties", err)
+			}
+			before := calls
+			if _, _, err := p.Read(ctx, 42, 42); err == nil || calls != before+1 {
+				t.Fatal("expected an actual failed block read", calls)
+			}
+		}
+		if wait := p.nodes[0].retry.Sub(now); wait != cooldown {
+			t.Fatal("wrong cooldown", wait, cooldown)
+		}
+		now = now.Add(cooldown - time.Second)
+		if _, err := p.Head(ctx); err == nil {
+			t.Fatal("tried cooling endpoint")
+		}
+		now = now.Add(time.Second)
 	}
-	now = now.Add(59 * time.Second)
 	reject = false
-	if _, _, err := p.Read(ctx, 42, 42); err == nil || calls != 4 {
-		t.Fatal("probe was not isolated")
+	if end, _, err := p.Read(ctx, 42, 42); end != 42 || err != nil {
+		t.Fatal(end, err)
 	}
-	now = now.Add(time.Second)
-	if end, _, err := p.Read(ctx, 42, 42); end != 42 || err != nil || calls != 5 {
-		t.Fatal(end, err, calls)
+	reject = true
+	for range 3 {
+		_, _, _ = p.Read(ctx, 42, 42)
 	}
+	if wait := p.nodes[0].retry.Sub(now); wait != time.Minute {
+		t.Fatal("successful read did not reset penalty", wait)
+	}
+	now = now.Add(time.Minute)
 	if _, err := p.Head(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -255,14 +283,14 @@ func TestSlowGapUsesFullLookahead(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		p := NewSourcePool(ctx, "tron")
 		var configs []chains.Network
-		for i := range 4 {
+		for i := range 8 {
 			configs = append(configs, chains.Network{Name: "tron", URL: fmt.Sprintf("http://node%d.test", i)})
 		}
 		if err := p.SetNodes(configs); err != nil {
 			t.Fatal(err)
 		}
 		const start = int64(100)
-		const head = start + 4*140 - 1
+		const head = start + 4*48 - 1
 		release := make(chan struct{})
 		var reads sync.Map
 		p.open = func(context.Context, chains.Network) (chains.Source, error) {
@@ -298,17 +326,17 @@ func TestSlowGapUsesFullLookahead(t *testing.T) {
 		if !slices.Equal(ends, []int64{103}) {
 			t.Fatalf("committed past gap: %v", ends)
 		}
-		for i := 0; i <= 128; i++ {
+		for i := 0; i <= 32; i++ {
 			if _, ok := reads.Load(start + int64(4*i)); !ok {
 				t.Fatalf("fast nodes stopped before range %d", i)
 			}
 		}
-		if _, ok := reads.Load(start + 4*129); ok {
-			t.Fatal("exceeded 128-range sliding window")
+		if _, ok := reads.Load(start + 4*33); ok {
+			t.Fatal("exceeded 32-range sliding window")
 		}
 		close(release)
 		<-done
-		if scanErr != nil || len(ends) != 140 {
+		if scanErr != nil || len(ends) != 48 {
 			t.Fatalf("completed %d ranges: %v", len(ends), scanErr)
 		}
 		for i, h := range ends {
@@ -365,4 +393,127 @@ func TestBytePressureAllowsOldestGapRetry(t *testing.T) {
 			t.Fatal(scanErr, calls.Load(), ends)
 		}
 	})
+}
+
+func TestEightLanesRepairSlowMiddleRange(t *testing.T) {
+	for _, mode := range []string{"ordered", "delivery"} {
+		t.Run(mode, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				p := NewSourcePool(ctx, "tron")
+				var cfg []chains.Network
+				for i := range 9 {
+					cfg = append(cfg, chains.Network{Name: "tron", URL: fmt.Sprintf("http://node%d.test", i)})
+				}
+				if err := p.SetNodes(cfg); err != nil {
+					t.Fatal(err)
+				}
+				type read struct {
+					from, to int64
+					url      string
+				}
+				started := make(chan read, 24)
+				release := make(chan struct{})
+				p.open = func(_ context.Context, n chains.Network) (chains.Source, error) {
+					return &mockLane{111, func(ctx context.Context, a, b int64) (int64, []chains.Activity, error) {
+						started <- read{a, b, n.URL}
+						if a == 104 && n.URL == cfg[4].URL {
+							<-ctx.Done()
+							return 0, nil, ctx.Err()
+						}
+						select {
+						case <-release:
+							return b, nil, nil
+						case <-ctx.Done():
+							return 0, nil, ctx.Err()
+						}
+					}}, nil
+				}
+				var ends []int64
+				var reported atomic.Int32
+				var repaired atomic.Bool
+				var scanErr error
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					emit := func(h int64, _ []chains.Activity) error {
+						ends = append(ends, h)
+						reported.Add(1)
+						if h == 104 {
+							repaired.Store(true)
+						}
+						return nil
+					}
+					if mode == "ordered" {
+						scanErr = p.Scan(ctx, 100, 111, emit)
+						return
+					}
+					var spans []chains.Span
+					for h := int64(100); h <= 111; h++ {
+						spans = append(spans, chains.Span{First: h, Last: h})
+					}
+					scanErr = p.ScanPending(ctx, spans, func(r chains.Span, _ chains.BlockLink, rows []chains.Activity, err error) error {
+						if err != nil {
+							return err
+						}
+						return emit(r.Last, rows)
+					})
+				}()
+				defer func() { cancel(); <-done; p.Close() }()
+				synctest.Wait()
+				if len(started) != 8 {
+					t.Fatalf("simultaneous starts: %d", len(started))
+				}
+				for range 8 {
+					r := <-started
+					if r.to != r.from || r.from < 100 || r.from > 107 || r.url != cfg[r.from-100].URL {
+						t.Fatal(r)
+					}
+				}
+				close(release)
+				synctest.Wait()
+				want := int32(4)
+				if mode == "delivery" {
+					want = 11
+				}
+				if reported.Load() != want || repaired.Load() {
+					t.Fatal("unexpected delivery before repair", mode, reported.Load())
+				}
+				time.Sleep(slowGapDelay - time.Millisecond)
+				synctest.Wait()
+				if repaired.Load() {
+					t.Fatal("reassigned early")
+				}
+				time.Sleep(time.Millisecond)
+				<-done
+				if scanErr != nil || len(ends) != 12 {
+					t.Fatal(ends, scanErr)
+				}
+				if mode == "delivery" {
+					if ends[len(ends)-1] != 104 {
+						t.Fatal("late gap not delivered", ends)
+					}
+					slices.Sort(ends)
+				}
+				for i, h := range ends {
+					if h != 100+int64(i) {
+						t.Fatal("out of order", ends)
+					}
+				}
+				close(started)
+				retries := 0
+				for r := range started {
+					if r.from == 104 {
+						retries++
+						if r.url == cfg[4].URL {
+							t.Fatal("retried slow backend")
+						}
+					}
+				}
+				if retries != 1 || p.nodes[4].readFailures != (failureStreak{}) {
+					t.Fatal("unexpected retry/penalty", retries)
+				}
+			})
+		})
+	}
 }

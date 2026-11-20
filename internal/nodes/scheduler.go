@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	parallelism   = 4
-	reorderRanges = 128
+	parallelism   = 8
+	rangesPerLane = 4
 	reorderBytes  = 32 << 20
+	slowGapDelay  = 10 * time.Second
 )
 
 // SourcePool is owned by one scan loop. SetNodes, Head, Read and Close must be
@@ -40,8 +41,23 @@ type endpoint struct {
 	src                        chains.Source
 	stop                       context.CancelFunc
 	tip                        int64
-	headFailures, readFailures int
+	headFailures, readFailures failureStreak
+	historyKey                 string
 	retry                      time.Time
+}
+
+// Count consecutive failures of the same operation. Each group of three
+// increases its penalty until a successful operation resets that streak.
+type failureStreak struct{ attempts, level int }
+
+func (s *failureStreak) fail() time.Duration {
+	s.attempts++
+	if s.attempts < 3 {
+		return 0
+	}
+	s.attempts = 0
+	s.level = min(s.level+1, 11)
+	return time.Duration(min(60, s.level*(s.level+1)/2)) * time.Minute
 }
 
 func NewSourcePool(ctx context.Context, network string) *SourcePool {
@@ -55,7 +71,11 @@ func (p *SourcePool) SetNodes(configs []chains.Network) error {
 	for _, n := range p.nodes {
 		old[n.cfg] = n
 	}
-	seen := map[chains.Network]bool{}
+	type route struct {
+		endpoint NodeEndpoint
+		history  string
+	}
+	seen := map[route]bool{}
 	var next []*endpoint
 	for _, cfg := range configs {
 		if cfg.Name != p.network || !chains.Supported(cfg.Name) {
@@ -64,13 +84,19 @@ func (p *SourcePool) SetNodes(configs []chains.Network) error {
 		if err := chains.ValidateNetwork(cfg); err != nil {
 			return err
 		}
-		if seen[cfg] {
+		protocol, _ := chains.EndpointProtocol(cfg)
+		key := route{(NodeEndpoint{cfg.Name, protocol, cfg.URL}).identity(), canonicalNodeURL(cfg.HistoryURL)}
+		if seen[key] {
 			continue
 		}
-		seen[cfg] = true
+		seen[key] = true
 		n := old[cfg]
 		if n == nil {
-			n = &endpoint{cfg: cfg, tip: -1}
+			history := cfg.HistoryURL
+			if history == "" {
+				history = cfg.URL
+			}
+			n = &endpoint{cfg: cfg, tip: -1, historyKey: canonicalNodeURL(history)}
 		}
 		next = append(next, n)
 	}
@@ -156,21 +182,20 @@ func (p *SourcePool) record(n *endpoint, read bool, err error) {
 	if err == nil {
 		p.uses++
 		n.lastUse = p.uses
-		*counter = 0
+		*counter = failureStreak{}
 		if read {
-			n.headFailures = 0
+			n.headFailures = failureStreak{}
 		}
-		if n.headFailures == 0 && n.readFailures == 0 {
+		if n.headFailures == (failureStreak{}) && n.readFailures == (failureStreak{}) {
 			n.retry = time.Time{}
 		}
 	} else {
-		*counter++
-		if *counter >= 3 || !n.retry.IsZero() {
-			n.retry = p.now().Add(time.Minute)
+		if cooldown := counter.fail(); cooldown > 0 {
+			n.retry = p.now().Add(cooldown)
 		}
 		n.close()
 	}
-	if p.Report != nil && (read || err != nil || n.readFailures == 0) {
+	if p.Report != nil && (read || err != nil || n.readFailures == (failureStreak{})) {
 		p.Report(n.cfg, err == nil)
 	}
 }
@@ -214,12 +239,15 @@ func (p *SourcePool) Head(ctx context.Context) (int64, error) {
 }
 
 type segment struct {
-	from, to      int64
-	running, done bool
-	events        []chains.Activity
-	first, last   chains.BlockLink
-	owner         *endpoint
-	bufferedBytes int64
+	from, to                    int64
+	running, done               bool
+	retry, redirected, yielding bool
+	started                     time.Time
+	cancel                      context.CancelCauseFunc
+	events                      []chains.Activity
+	first, last                 chains.BlockLink
+	owner                       *endpoint
+	bufferedBytes               int64
 }
 
 // Estimate retained decoded activity data without serializing it again.
@@ -271,12 +299,6 @@ func (p *SourcePool) fetch(ctx context.Context, n *endpoint, j *segment, oneRead
 	}
 	return nil
 }
-func (n *endpoint) history() string {
-	if n.cfg.HistoryURL != "" {
-		return n.cfg.HistoryURL
-	}
-	return n.cfg.URL
-}
 
 type completion struct {
 	slot int
@@ -284,11 +306,46 @@ type completion struct {
 	err  error
 }
 
+var errSlowGap = errors.New("slow range reassigned")
+
+func (p *SourcePool) start(ctx context.Context, wg *sync.WaitGroup, results chan<- completion, slot int, node *endpoint, j *segment, oneRead bool) {
+	attempt, stop := context.WithCancelCause(ctx)
+	j.running, j.started, j.cancel = true, p.now(), stop
+	wg.Go(func() {
+		err := p.fetch(attempt, node, j, oneRead)
+		if err != nil && context.Cause(attempt) == errSlowGap {
+			err = errSlowGap
+		}
+		stop(nil)
+		results <- completion{slot, node, err}
+	})
+}
+
+// Yield a slow request only if some later work succeeded and a distinct
+// eligible provider is idle. Each span may yield once.
+func (p *SourcePool) checkSlowGap(j *segment, busy map[string]bool, excluded func(*endpoint) bool) <-chan time.Time {
+	if !j.running || j.redirected || len(busy) >= parallelism {
+		return nil
+	}
+	for _, peer := range p.nodes {
+		if busy[peer.historyKey] || excluded(peer) || p.now().Before(peer.retry) {
+			continue
+		}
+		if left := slowGapDelay - p.now().Sub(j.started); left > 0 {
+			return time.After(left)
+		}
+		j.redirected, j.yielding = true, true
+		j.cancel(errSlowGap)
+		break
+	}
+	return nil
+}
+
 // Scan dispatches more work after each completion. A slow gap can hold up
 // delivery, but other endpoints keep fetching up to the reorder buffer limit.
 // emit runs serially on complete, consecutive ranges while later RPCs run.
 func (p *SourcePool) Scan(ctx context.Context, next, head int64, emit func(int64, []chains.Activity) error) error {
-	return p.scan(ctx, next, head, 2*reorderRanges, emit)
+	return p.scan(ctx, next, head, 2*rangesPerLane*parallelism, emit)
 }
 
 func (p *SourcePool) scan(ctx context.Context, next, head int64, maxRanges int, emit func(int64, []chains.Activity) error) error {
@@ -299,7 +356,7 @@ func (p *SourcePool) scan(ctx context.Context, next, head int64, maxRanges int, 
 	distinct := map[string]bool{}
 	for _, n := range p.nodes {
 		if !p.now().Before(n.retry) {
-			distinct[n.history()] = true
+			distinct[n.historyKey] = true
 		}
 	}
 	lanes := min(parallelism, len(distinct))
@@ -313,8 +370,15 @@ func (p *SourcePool) scan(ctx context.Context, next, head int64, maxRanges int, 
 	case "aptos":
 		width = 100
 	}
-	width = min(width, max(1, (head-next+1)/int64(lanes)))
+	remaining := head - next + 1
+	if remaining <= int64(2*lanes) {
+		width = 1
+	} else {
+		width = min(width, remaining/int64(lanes))
+	}
+	window := rangesPerLane * lanes
 	// Periodically return to the caller for updated configuration and tip.
+	maxRanges = min(maxRanges, 2*window)
 	if lanes == 1 {
 		maxRanges = min(maxRanges, 4)
 	}
@@ -335,27 +399,36 @@ func (p *SourcePool) scan(ctx context.Context, next, head int64, maxRanges int, 
 		previous = p.anchorHash
 	}
 	var bufferedBytes int64
+	var readyCount int
 	for front := 0; front < len(jobs); {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		var checkGap <-chan time.Time
+		gap := &jobs[front]
+		if readyCount > 0 {
+			checkGap = p.checkSlowGap(gap, busy, func(n *endpoint) bool { return failed[n] })
+		}
 		// First unassigned slot has priority. A failed slot is immediately
 		// eligible again, on any peer that has not failed this scan.
-		for slot := front; slot < min(len(jobs), front+reorderRanges) && len(busy) < lanes; slot++ {
-			// Even when full, allow the oldest missing range to retry:
-			// it is the only read that can release buffered results.
-			if slot != front && bufferedBytes >= reorderBytes {
-				break
-			}
+		for slot := front; slot < min(len(jobs), front+window) && len(busy) < lanes; slot++ {
 			j := &jobs[slot]
 			if j.running || j.done {
+				continue
+			}
+			// Reserve a replacement for a cancelled front read; its result
+			// will return through the same channel as any other attempt.
+			if gap.yielding {
+				break
+			}
+			if slot != front && bufferedBytes >= reorderBytes && !j.retry {
 				continue
 			}
 			var worker *endpoint
 			for k := range p.nodes {
 				i := (p.next + k) % len(p.nodes)
 				n := p.nodes[i]
-				if busy[n.history()] || failed[n] || p.now().Before(n.retry) {
+				if busy[n.historyKey] || failed[n] || p.now().Before(n.retry) {
 					continue
 				}
 				worker = n
@@ -365,10 +438,8 @@ func (p *SourcePool) scan(ctx context.Context, next, head int64, maxRanges int, 
 			if worker == nil {
 				break
 			}
-			busy[worker.history()] = true
-			j.running = true
-			wg.Add(1)
-			go func() { defer wg.Done(); results <- completion{slot, worker, p.fetch(fetchCtx, worker, j, false)} }()
+			busy[worker.historyKey] = true
+			p.start(fetchCtx, &wg, results, slot, worker, j, false)
 		}
 		if len(busy) == 0 {
 			return fmt.Errorf("no node could complete %s range %d..%d", p.network, jobs[front].from, jobs[front].to)
@@ -377,21 +448,35 @@ func (p *SourcePool) scan(ctx context.Context, next, head int64, maxRanges int, 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-checkGap:
+			continue
 		case result = <-results:
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		j := &jobs[result.slot]
-		delete(busy, result.node.history())
+		delete(busy, result.node.historyKey)
 		j.running = false
-		p.record(result.node, true, result.err)
+		j.cancel = nil
+		j.yielding = false
+		if result.err == errSlowGap {
+			for _, peer := range p.nodes {
+				if peer.historyKey == result.node.historyKey {
+					failed[peer] = true
+				}
+			}
+		} else {
+			p.record(result.node, true, result.err)
+		}
 		if result.err != nil {
+			j.retry = true
 			j.events = nil
 			failed[result.node] = true
 			continue
 		}
 		j.done = true
+		readyCount++
 		j.owner = result.node
 		if result.slot != front {
 			j.bufferedBytes = activityBytes(j.events)
@@ -399,6 +484,7 @@ func (p *SourcePool) scan(ctx context.Context, next, head int64, maxRanges int, 
 		}
 		for front < len(jobs) && jobs[front].done {
 			ready := &jobs[front]
+			readyCount--
 			bufferedBytes -= ready.bufferedBytes
 			ready.bufferedBytes = 0
 			if previous != "" && previous != ready.first.Parent {
@@ -406,6 +492,7 @@ func (p *SourcePool) scan(ctx context.Context, next, head int64, maxRanges int, 
 				// only this range against the already emitted predecessor.
 				failed[ready.owner] = true
 				ready.done = false
+				ready.retry = true
 				ready.events = nil
 				break
 			}
@@ -425,7 +512,7 @@ func (p *SourcePool) Read(ctx context.Context, next, head int64) (int64, []chain
 	var end int64
 	var events []chains.Activity
 	// Read collects all rows in one slice. Keep this compatibility API bounded;
-	// ordered callers can use Scan to stream the longer window.
+	// the scan worker uses Scan to stream the longer window.
 	err := p.scan(ctx, next, head, 4*parallelism, func(h int64, rows []chains.Activity) error { end = h; events = append(events, rows...); return nil })
 	if err != nil {
 		return 0, nil, err
@@ -435,29 +522,16 @@ func (p *SourcePool) Read(ctx context.Context, next, head int64) (int64, []chain
 
 // ScanWindow preserves the multi-node lookahead in units of durable work.
 func (p *SourcePool) ScanWindow() int {
-	var first string
+	active := map[string]bool{}
 	for _, n := range p.nodes {
-		if p.now().Before(n.retry) {
-			continue
+		if !p.now().Before(n.retry) {
+			active[n.historyKey] = true
 		}
-		history := n.history()
-		if first == "" {
-			first = history
-			continue
-		}
-		if history == first {
-			continue
-		}
-		switch p.network {
-		case "aptos":
-			return reorderRanges // each page covers up to 100 versions
-		case "solana":
-			return 16 * reorderRanges
-		default:
-			return 4 * reorderRanges
+		if len(active) == parallelism {
+			break
 		}
 	}
-	return 16
+	return max(2, len(active)*rangesPerLane)
 }
 
 // ScanPending serves the store's sparse work list. The legacy Scan/Read API
@@ -466,7 +540,8 @@ func (p *SourcePool) ScanPending(ctx context.Context, spans []chains.Span, finis
 	defer p.trimConnections()
 	type task struct {
 		segment
-		tried map[*endpoint]bool
+		tried       map[*endpoint]bool
+		slowHistory string
 	}
 	jobs := make([]task, len(spans))
 	for i, r := range spans {
@@ -477,12 +552,24 @@ func (p *SourcePool) ScanPending(ctx context.Context, spans []chains.Span, finis
 	defer func() { cancel(); wg.Wait() }()
 	busy := map[string]bool{}
 	results := make(chan completion, parallelism)
+	highestFinished := int64(-1)
 	for remaining := len(jobs); remaining > 0; {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		var oldest *task
 		for i := range jobs {
-			if len(busy) >= parallelism {
+			j := &jobs[i]
+			if !j.done && (oldest == nil || j.from < oldest.from) {
+				oldest = j
+			}
+		}
+		var checkGap <-chan time.Time
+		if oldest != nil && highestFinished > oldest.from && len(oldest.tried) < 3 {
+			checkGap = p.checkSlowGap(&oldest.segment, busy, func(n *endpoint) bool { return oldest.tried[n] || n.historyKey == oldest.slowHistory })
+		}
+		for i := range jobs {
+			if oldest.yielding || len(busy) >= parallelism {
 				break
 			}
 			j := &jobs[i]
@@ -499,10 +586,10 @@ func (p *SourcePool) ScanPending(ctx context.Context, spans []chains.Span, finis
 				}
 				index := (p.next + k) % len(p.nodes)
 				n := p.nodes[index]
-				if j.tried[n] || p.now().Before(n.retry) {
+				if j.tried[n] || n.historyKey == j.slowHistory || p.now().Before(n.retry) {
 					continue
 				}
-				if busy[n.history()] {
+				if busy[n.historyKey] {
 					waiting = true
 					continue
 				}
@@ -522,13 +609,9 @@ func (p *SourcePool) ScanPending(ctx context.Context, spans []chains.Span, finis
 				remaining--
 				continue
 			}
-			busy[node.history()] = true
+			busy[node.historyKey] = true
 			j.tried[node] = true
-			j.running = true
-			wg.Go(func() {
-				err := p.fetch(calls, node, &j.segment, true)
-				results <- completion{i, node, err}
-			})
+			p.start(calls, &wg, results, i, node, &j.segment, true)
 		}
 		if remaining == 0 {
 			break
@@ -536,10 +619,16 @@ func (p *SourcePool) ScanPending(ctx context.Context, spans []chains.Span, finis
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-checkGap:
+			continue
 		case result := <-results:
 			j := &jobs[result.slot]
-			delete(busy, result.node.history())
-			j.running = false
+			delete(busy, result.node.historyKey)
+			j.running, j.yielding = false, false
+			j.cancel = nil
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			err := result.err
 			if err == nil {
 				link := chains.BlockLink{Hash: j.last.Hash, Parent: j.first.Parent}
@@ -548,9 +637,14 @@ func (p *SourcePool) ScanPending(ctx context.Context, spans []chains.Span, finis
 					return err
 				}
 			}
-			p.record(result.node, true, err)
+			if err == errSlowGap {
+				j.slowHistory = result.node.historyKey
+			} else {
+				p.record(result.node, true, err)
+			}
 			j.events = nil
 			if err == nil {
+				highestFinished = max(highestFinished, j.to)
 				j.done = true
 				remaining--
 			} else {
