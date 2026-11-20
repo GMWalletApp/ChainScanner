@@ -90,6 +90,10 @@ type jsonSource struct {
 }
 
 func NewSource(ctx context.Context, n Network) (Source, error) {
+	return newSource(ctx, n, false, true)
+}
+
+func newSource(ctx context.Context, n Network, discovered, watch bool) (Source, error) {
 	if err := ValidateNetwork(n); err != nil {
 		return nil, err
 	}
@@ -116,6 +120,9 @@ func NewSource(ctx context.Context, n Network) (Source, error) {
 	switch {
 	case IsEVM(n.Name) || n.Name == "solana":
 		opts := []rpc.ClientOption{rpc.WithHTTPClient(s.http)}
+		if discovered {
+			opts = publicRPCOptions(s.http)
+		}
 		if n.APIKey != "" {
 			opts = append(opts, rpc.WithHeader("Authorization", "Bearer "+n.APIKey))
 		}
@@ -138,10 +145,10 @@ func NewSource(ctx context.Context, n Network) (Source, error) {
 			id, e := s.call(probe, "eth_chainId")
 			actual, parseErr := strconv.ParseInt(id.String(), 0, 64)
 			if e != nil || parseErr != nil || actual != EVMChainID(n.Name) {
-				c.Close()
+				s.Close()
 				return nil, fmt.Errorf("chain ID check failed for %s (received %s): %v", n.Name, id.String(), e)
 			}
-			if p == "ws" || p == "ipc" {
+			if watch && (p == "ws" || p == "ipc") {
 				s.heads = startSignals(ctx, func(ctx context.Context, wake func()) error {
 					heads := make(chan json.RawMessage, 8)
 					setup, cancel := context.WithTimeout(ctx, 8*time.Second)

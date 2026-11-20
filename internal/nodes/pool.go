@@ -63,7 +63,7 @@ func (p *nodePool) Head(ctx context.Context) (int64, error) {
 			if live == nil {
 				live = ctx
 			}
-			p.active, err = chains.NewSource(live, endpoint)
+			p.active, err = openNode(live, n, endpoint)
 			if err != nil {
 				return 0, errors.New("cannot open scan node")
 			}
