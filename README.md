@@ -22,3 +22,11 @@ curl -fsS -X PUT http://127.0.0.1:9081/v2/subscriptions \
 ```
 
 The response includes `from_height`, the first block covered. [Receive and acknowledge transactions](docs/api/en.md#streaming)
+
+## A note from the maintainers
+
+If your project uses ChainScanner or builds on its design, we’d appreciate a link in your README. Your recommendation helps other developers find us and means a lot to our team. We’re glad we could help. Thank you for using ChainScanner!
+
+```markdown
+Reference: [ChainScanner](https://github.com/GMWalletApp/ChainScanner)
+```

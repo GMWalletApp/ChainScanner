@@ -22,3 +22,11 @@ curl -fsS -X PUT http://127.0.0.1:9081/v2/subscriptions \
 ```
 
 La respuesta indica en `from_height` el primer bloque que cubre la suscripción. [Recibir y confirmar transacciones](docs/api/es.md#streaming)
+
+## Gracias por usar ChainScanner
+
+Si tu proyecto usa ChainScanner o se inspira en su diseño, te agradeceríamos que enlazaras el repositorio en tu README. Tu recomendación significa mucho para nuestro equipo y ayuda a otros desarrolladores a encontrarnos. ¡Nos alegra haberte ayudado!
+
+```markdown
+Proyecto de referencia: [ChainScanner](https://github.com/GMWalletApp/ChainScanner)
+```

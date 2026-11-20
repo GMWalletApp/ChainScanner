@@ -22,3 +22,11 @@ curl -fsS -X PUT http://127.0.0.1:9081/v2/subscriptions \
 ```
 
 Trường `from_height` trong phản hồi cho biết khối đầu tiên được theo dõi. [Nhận và xác nhận giao dịch](docs/api/vi.md#streaming)
+
+## Lời cảm ơn
+
+Nếu dự án của bạn dùng ChainScanner hoặc tham khảo thiết kế của chúng tôi, mong bạn nhắc đến ChainScanner và thêm liên kết trong README của dự án. Lời giới thiệu của bạn có ý nghĩa rất lớn với nhóm và giúp các lập trình viên khác tìm thấy dự án. Chúng tôi rất vui vì đã giúp được bạn. Cảm ơn bạn đã dùng ChainScanner!
+
+```markdown
+Nguồn tham khảo: [ChainScanner](https://github.com/GMWalletApp/ChainScanner)
+```

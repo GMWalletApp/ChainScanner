@@ -22,3 +22,11 @@ curl -fsS -X PUT http://127.0.0.1:9081/v2/subscriptions \
 ```
 
 响应中的 `from_height` 是开始监听的第一个区块。 [接收交易并确认处理](docs/api/zh-CN.md#streaming)
+
+## 致使用 ChainScanner 的你
+
+如果你的项目用到了 ChainScanner，或参考了我们的扫块方案，希望你能在项目的 README 里提一句 ChainScanner，附上仓库链接。这份推荐对我们很重要，也能让更多开发者找到这个项目。很高兴能帮到你，谢谢你的使用！
+
+```markdown
+扫块方案参考了 [ChainScanner](https://github.com/GMWalletApp/ChainScanner)。
+```
