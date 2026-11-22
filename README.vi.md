@@ -5,7 +5,7 @@
 <p align="center">Go 1.25+ &nbsp;·&nbsp; <a href="LICENSE">GM Wallet Community License 2.2</a> &nbsp;·&nbsp; 17 mạng</p>
 <p align="center"><a href="docs/guide/vi.md#quick-start">Khởi động nhanh</a> &nbsp;·&nbsp; <a href="docs/guide/vi.md#networks">Mạng hỗ trợ</a> &nbsp;·&nbsp; <a href="docs/api/vi.md">Tài liệu API</a></p>
 
-Doanh nghiệp có tổng doanh thu toàn cầu cùng các đơn vị liên kết vượt 1.000.000 USD trong 12 tháng gần nhất phải mua giấy phép, kể cả khi thua lỗ. Theo giấy phép cộng đồng, khi phát hành, bàn giao hoặc đưa bản sửa đổi vào vận hành, phải công khai miễn phí mã nguồn tương ứng của phiên bản đó, ghi công rõ ràng và dẫn liên kết đến dự án gốc. Với mỗi phiên bản như vậy, kể cả khi triển khai SaaS, phải gửi bản sửa đổi chính xác về dự án gốc bằng pull request hoặc nhánh theo mục 13. GM Wallet quyết định có hợp nhất hay không. Hợp đồng thương mại bằng văn bản có thể quy định điều khoản khác. [Giấy phép](LICENSE) · [Điều khoản đóng góp](CONTRIBUTING.md) · [info@gmwallet.app](mailto:info@gmwallet.app)
+Doanh nghiệp có tổng doanh thu toàn cầu cùng các đơn vị liên kết vượt 1.000.000 USD trong 12 tháng gần nhất phải mua giấy phép, kể cả khi thua lỗ. Theo giấy phép cộng đồng, khi phát hành, bàn giao hoặc đưa bản sửa đổi vào vận hành, phải công khai miễn phí mã nguồn tương ứng của phiên bản đó, ghi công rõ ràng và dẫn liên kết đến dự án gốc. Với mỗi phiên bản như vậy, kể cả khi triển khai SaaS, phải gửi bản sửa đổi chính xác về dự án gốc bằng pull request hoặc nhánh theo mục 13. GM Wallet quyết định có hợp nhất hay không. Hợp đồng thương mại bằng văn bản có thể quy định điều khoản khác. [Giấy phép](LICENSE) · [info@gmwallet.app](mailto:info@gmwallet.app)
 
 ---
 
