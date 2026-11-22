@@ -2,10 +2,8 @@
 <h1 align="center">ChainScanner</h1>
 <p align="center"><strong>Sigue direcciones en la cadena y recibe sus transacciones por WebSocket, gRPC o HTTP.</strong></p>
 <p align="center"><a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.vi.md">Tiếng Việt</a> · <strong>Español</strong> · <a href="README.ru.md">Русский</a></p>
-<p align="center">Go 1.25+ &nbsp;·&nbsp; <a href="LICENSE">GM Wallet Community License 2.2</a> &nbsp;·&nbsp; 17 redes</p>
+<p align="center">Go 1.25+ &nbsp;·&nbsp; <a href="LICENSE">AGPL-3.0</a> &nbsp;·&nbsp; 17 redes</p>
 <p align="center"><a href="docs/guide/es.md#quick-start">Inicio rápido</a> &nbsp;·&nbsp; <a href="docs/guide/es.md#networks">Redes compatibles</a> &nbsp;·&nbsp; <a href="docs/api/es.md">Referencia de la API</a></p>
-
-Las empresas con ingresos mundiales conjuntos con sus entidades vinculadas superiores a 1.000.000 USD en los últimos 12 meses necesitan una licencia de pago, incluso con pérdidas. Al publicar, entregar o poner en producción una versión modificada, la licencia comunitaria exige acceso público gratuito al código fuente correspondiente, el crédito visible y un enlace al proyecto original. Cada versión de este tipo, incluidos los despliegues SaaS, debe enviarse al proyecto original mediante una solicitud de incorporación o una rama según la sección 13. GM Wallet decide si la incorpora. Un contrato comercial escrito puede establecer otras condiciones. [Licencia](LICENSE) · [info@gmwallet.app](mailto:info@gmwallet.app)
 
 ---
 
