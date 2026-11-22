@@ -2,7 +2,7 @@
 <h1 align="center">ChainScanner</h1>
 <p align="center"><strong>订阅链上地址，通过 WebSocket、gRPC 或 HTTP 接收相关交易。</strong></p>
 <p align="center"><a href="README.md">English</a> · <strong>简体中文</strong> · <a href="README.vi.md">Tiếng Việt</a> · <a href="README.es.md">Español</a> · <a href="README.ru.md">Русский</a></p>
-<p align="center">Go 1.25+ &nbsp;·&nbsp; <a href="LICENSE">GM Wallet Community License 2.0</a> &nbsp;·&nbsp; 17 条网络</p>
+<p align="center">Go 1.25+ &nbsp;·&nbsp; <a href="LICENSE">GM Wallet Community License 2.1</a> &nbsp;·&nbsp; 17 条网络</p>
 <p align="center"><a href="docs/guide/zh-CN.md#quick-start">快速开始</a> &nbsp;·&nbsp; <a href="docs/guide/zh-CN.md#networks">支持的网络</a> &nbsp;·&nbsp; <a href="docs/api/zh-CN.md">接口文档</a></p>
 
 公司及其关联实体过去 12 个月的全球合计收入严格超过 100 万美元，即使亏损也须购买许可。按社区条款，修改版在发布、交付或上线运行时须免费向公众提供该版本的完整对应源码，显著保留指定署名及原项目链接。另行签署的商业合同可约定不同条款。 [许可](LICENSE) · [贡献者条款](CONTRIBUTING.md) · [info@gmwallet.app](mailto:info@gmwallet.app)
