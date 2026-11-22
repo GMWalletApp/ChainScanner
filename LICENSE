@@ -1,21 +1,90 @@
-MIT License
+GM Wallet Community License 1.0
 
 Copyright (c) 2026 GM Wallet
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+1. Scope and grant
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Good Morning Technology, LLC ("GM Wallet") offers this license for the code
+and documentation it owns or is authorized to license in the release that
+includes this notice (the "Software"). Separately licensed material,
+including third-party dependencies and components with their own license
+notices, remains subject to its respective license.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Subject to the conditions below, GM Wallet grants each recipient a
+worldwide, non-exclusive, royalty-free license to use, run, copy, study,
+modify and distribute the Software and works derived from it. Commercial
+use is included, subject to section 2.
+
+2. Company revenue and paid licensing
+
+A company whose annual group revenue strictly exceeds USD 1,000,000 must
+obtain a separate paid written license from GM Wallet before using the
+Software or exercising any other permission under this license. This also
+applies to use on the company's behalf, including by employees and
+contractors, whether for internal operations, hosting or customer-facing
+services. A company that crosses the threshold during use must obtain the
+paid license before continuing. At exactly USD 1,000,000, a company remains
+eligible for this community license.
+
+Annual group revenue means the combined worldwide revenue from all business
+activities of the company and its affiliates over the immediately preceding
+twelve months. An affiliate is an entity that directly or indirectly
+controls, is controlled by, or is under common control with the company.
+Control means the power to direct an entity's management or policies
+through voting rights, contract or otherwise. Count each entity once,
+eliminate transactions within the group, and include revenue for the
+portion of the period during which each entity belonged to the group. A
+newly formed entity counts its actual revenue for that period.
+
+Use revenue recognized under applicable accounting standards before
+deducting costs or expenses. The threshold applies regardless of the profit
+or loss of the company or group. Amounts processed for others count only to
+the extent recognized as the group's own revenue. Convert non-USD revenue
+using a consistently applied published exchange rate applicable to the
+period in which the revenue was recognized.
+
+3. Distribution and corresponding source
+
+If you distribute the Software or a work derived from it, retain its
+copyright, attribution and license notices, provide a copy of this license,
+and prominently identify changes you made and their dates. License the
+entire derived work to recipients under this same license. Independent
+works merely distributed alongside the Software keep their own licenses.
+Each distributor grants recipients the permissions in section 1 for its own
+contributions. Each recipient receives those permissions directly from the
+relevant copyright holders, subject to that recipient's eligibility under
+section 2. You may charge for copies or services. You may not impose
+additional restrictions on the permissions granted to recipients by this
+license.
+
+When distributing a binary, executable or container image, give each
+recipient the complete corresponding source for that exact version, either
+with the copy or through a clearly identified download available at no
+additional charge for as long as you distribute that version. Corresponding
+source means the preferred form for making changes, including your
+modifications and the scripts and configuration templates needed to build,
+install and run the distributed version. It excludes ordinary system tools
+and libraries that are generally available and used unmodified. Private use
+or operating a network service, by itself, does not trigger this
+distribution obligation. Section 2 still applies.
+
+4. Termination and rights reserved
+
+If you breach these terms, your permissions under this license terminate.
+Termination does not affect the rights of recipients who independently
+comply with this license. Rights already granted under a license for
+another version remain governed by that license. Rights that applicable law
+grants independently of this license are unaffected.
+
+5. Warranty and liability
+
+To the extent permitted by applicable law, the Software is provided "as
+is", without express or implied warranty, including warranties of
+merchantability, fitness for a particular purpose and non-infringement. To
+the same extent, the copyright holders and contributors shall not be liable
+for claims, damages or other liability arising from the Software or its
+use, whether in contract, tort or otherwise.
+
+Commercial licensing requests may be directed to Good Morning Technology,
+LLC through the issue tracker of the official GMWalletApp repository from
+which this release was obtained. A request alone grants no license.

@@ -2,8 +2,10 @@
 <h1 align="center">ChainScanner</h1>
 <p align="center"><strong>Theo dõi địa chỉ trên chuỗi và nhận giao dịch qua WebSocket, gRPC hoặc HTTP.</strong></p>
 <p align="center"><a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <strong>Tiếng Việt</strong> · <a href="README.es.md">Español</a> · <a href="README.ru.md">Русский</a></p>
-<p align="center">Go 1.25+ &nbsp;·&nbsp; <a href="LICENSE">MIT</a> &nbsp;·&nbsp; 17 mạng</p>
+<p align="center">Go 1.25+ &nbsp;·&nbsp; <a href="LICENSE">GM Wallet Community License 1.0</a> &nbsp;·&nbsp; 17 mạng</p>
 <p align="center"><a href="docs/guide/vi.md#quick-start">Khởi động nhanh</a> &nbsp;·&nbsp; <a href="docs/guide/vi.md#networks">Mạng hỗ trợ</a> &nbsp;·&nbsp; <a href="docs/api/vi.md">Tài liệu API</a></p>
+
+Doanh nghiệp có tổng doanh thu toàn cầu tính chung với các đơn vị liên kết trong 12 tháng gần nhất vượt 1.000.000 USD phải mua giấy phép, kể cả khi kinh doanh thua lỗ. Khi doanh thu bằng hoặc thấp hơn ngưỡng này, giấy phép cộng đồng cho phép sử dụng thương mại. Khi phân phối phần mềm, phải cung cấp mã nguồn tương ứng. [Đăng ký giấy phép thương mại](https://github.com/GMWalletApp/ChainScanner/issues/new)
 
 ---
 
