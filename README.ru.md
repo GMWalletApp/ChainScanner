@@ -2,10 +2,8 @@
 <h1 align="center">ChainScanner</h1>
 <p align="center"><strong>Отслеживайте адреса в блокчейне и получайте связанные с ними транзакции через WebSocket, gRPC или HTTP.</strong></p>
 <p align="center"><a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.vi.md">Tiếng Việt</a> · <a href="README.es.md">Español</a> · <strong>Русский</strong></p>
-<p align="center">Go 1.25+ &nbsp;·&nbsp; <a href="LICENSE">GM Wallet Community License 2.2</a> &nbsp;·&nbsp; 17 сетей</p>
+<p align="center">Go 1.25+ &nbsp;·&nbsp; <a href="LICENSE">AGPL-3.0</a> &nbsp;·&nbsp; 17 сетей</p>
 <p align="center"><a href="docs/guide/ru.md#quick-start">Быстрый старт</a> &nbsp;·&nbsp; <a href="docs/guide/ru.md#networks">Сети</a> &nbsp;·&nbsp; <a href="docs/api/ru.md">Справочник по API</a></p>
-
-Если совокупная мировая выручка компании и её аффилированных лиц за последние 12 месяцев превышает 1 000 000 долларов США, требуется платная лицензия, даже при убытке. По лицензии сообщества при выпуске, передаче или вводе изменённой версии в эксплуатацию необходимо бесплатно опубликовать соответствующий исходный код и разместить на видном месте указание авторства и ссылку на исходный проект. Каждую такую версию, включая развёртывание SaaS, также необходимо направить в исходный проект через pull request или ветку согласно разделу 13. GM Wallet решает, принимать ли изменения. Письменный коммерческий договор может предусматривать другие условия. [Лицензия](LICENSE) · [info@gmwallet.app](mailto:info@gmwallet.app)
 
 ---
 
