@@ -81,6 +81,7 @@ curl -i -sS -H "Authorization: Bearer $TOKEN" "$BASE/v1/events/next?network=base
 
 | 网络 | 协议 | 活动与历史数据 |
 | --- | --- | --- |
+| `bitcoin` | `jsonrpc` · `http` | 从前序输出、收款及找零脚本匹配地址。节点需提供区块及 undo 数据。 |
 | `tron` | `http` · `rest` · `grpc` · `solidity-http` · `solidity-grpc` · `jsonrpc` | Wallet 转账、回执及内部转账。WalletSolidity 读取已固化区块；JSON-RPC 需要配对 Wallet HTTP 历史节点。 |
 | `solana` | `http` · `jsonrpc` · `ws` · `grpc` | 按最终确认的 slot 扫描交易账户与 SPL 所有者。PubSub 和 Yellowstone 需配对 HTTP 节点查询完整区块并识别跳过的 slot。 |
 | `sui` | `grpc` · `graphql` | 原生 Move 检查点、发送方、赞助方、所有者和事件。HTTPS 默认使用 gRPC v2。 |

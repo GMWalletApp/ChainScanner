@@ -13,6 +13,8 @@ import (
 // retained for configurations created before explicit protocol selection.
 func Protocols(network string) []string {
 	switch {
+	case network == "bitcoin":
+		return []string{"jsonrpc", "http"}
 	case network == "ethereum":
 		return []string{"ws", "http", "jsonrpc", "graphql", "ipc", "sse"}
 	case IsEVM(network):

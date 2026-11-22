@@ -44,6 +44,9 @@ func evmHeads(ctx context.Context, c *rpc.Client, observe func(int64)) error {
 type BlockLink struct{ Hash, Parent string }
 
 func (s *jsonSource) ReadLinkedBlock(ctx context.Context, h int64, link *BlockLink) (int64, []Activity, error) {
+	if s.n.Name == "bitcoin" {
+		return s.bitcoinBlock(ctx, h, link)
+	}
 	label := fmt.Sprintf("0x%x", h)
 	block, err := s.call(ctx, "eth_getBlockByNumber", label, true)
 	if err != nil {

@@ -173,7 +173,7 @@ func (r *NodeRegistry) scan(row interface{ Scan(...any) error }) (Node, error) {
 			n.ReadRetryAt = f.retry.UnixMilli()
 		}
 	}
-	n.Scannable = n.Protocol != "toncenter-v3" && chains.Supported(n.Network) && !slices.Contains(heightOnlyNodes, n.NodeEndpoint.identity())
+	n.Scannable = n.Protocol != "unisat" && n.Protocol != "toncenter-v3" && chains.Supported(n.Network) && !slices.Contains(heightOnlyNodes, n.NodeEndpoint.identity())
 	switch {
 	case n.Protocol == "sse":
 		n.HeightUnit = "beacon_slot"
@@ -220,7 +220,7 @@ func (r *NodeRegistry) visible(n Node) bool {
 			return false
 		}
 	}
-	if n.Network != "bitcoin" && !chains.Supported(n.Network) {
+	if !chains.Supported(n.Network) {
 		return false
 	}
 	_, configured := r.configured[n.NodeEndpoint]
@@ -258,6 +258,9 @@ func (r *NodeRegistry) validate(options NodeOptions, fallback bool) (NodeEndpoin
 	if fallback && !chains.Supported(options.Network) {
 		return NodeEndpoint{}, errInvalidNode
 	}
+	if fallback && options.Network == "bitcoin" && options.Protocol == "unisat" {
+		return NodeEndpoint{}, errInvalidNode
+	}
 	if blocked := r.blacklist.hosts(); blocked.matches(strings.TrimSpace(options.URL)) || blocked.matches(options.HistoryURL) {
 		return NodeEndpoint{}, errInvalidNode
 	}
@@ -276,8 +279,8 @@ func (options NodeOptions) ValidatedEndpoint() (NodeEndpoint, error) {
 		if u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "http") || options.HistoryURL != "" || options.HistoryAPIKey != "" {
 			return NodeEndpoint{}, errInvalidNode
 		}
-	} else if e.Network == "bitcoin" {
-		if u.Hostname() == "" || options.HistoryURL != "" || options.HistoryAPIKey != "" || (e.Protocol != "unisat" && e.Protocol != "jsonrpc") || (u.Scheme != "https" && u.Scheme != "http") {
+	} else if e.Network == "bitcoin" && e.Protocol == "unisat" {
+		if u.Hostname() == "" || options.HistoryURL != "" || options.HistoryAPIKey != "" || (u.Scheme != "https" && u.Scheme != "http") {
 			return NodeEndpoint{}, errInvalidNode
 		}
 	} else {
