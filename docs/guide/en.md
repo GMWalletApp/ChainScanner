@@ -81,6 +81,7 @@ EVM mainnets share an adapter. Set the exact network ID in every watch and node 
 
 | Network | Protocols | Activity and history |
 | --- | --- | --- |
+| `bitcoin` | `jsonrpc` · `http` | Spent prevouts, recipients and change. Requires full blocks with undo data. |
 | `tron` | `http` · `rest` · `grpc` · `solidity-http` · `solidity-grpc` · `jsonrpc` | Wallet transfers, receipts and internal transfers. WalletSolidity reads solidified blocks. JSON-RPC needs a Wallet HTTP history URL. |
 | `solana` | `http` · `jsonrpc` · `ws` · `grpc` | Finalized slots, transaction accounts and SPL owners. PubSub and Yellowstone require HTTP history for full blocks and skipped slots. |
 | `sui` | `grpc` · `graphql` | Native Move checkpoints, senders, sponsors, owners and events. The HTTPS default uses gRPC v2. |

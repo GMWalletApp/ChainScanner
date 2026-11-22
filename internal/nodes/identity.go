@@ -51,6 +51,9 @@ func (e NodeEndpoint) identity() NodeEndpoint {
 			e.URL = u.String()
 		}
 	}
+	if e.Network == "bitcoin" && e.Protocol == "http" {
+		e.Protocol = "jsonrpc"
+	}
 	if chains.IsEVM(e.Network) && e.Protocol == "jsonrpc" {
 		e.Protocol = "http"
 	}
