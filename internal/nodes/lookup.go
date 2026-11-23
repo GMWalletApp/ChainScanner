@@ -1,7 +1,6 @@
 package nodes
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -66,7 +65,7 @@ func (l *transactionLookup) record(id nodeVersion, err error) {
 		}
 		l.nextSweep = now.Add(time.Minute)
 	}
-	if err == nil || errors.Is(err, chains.ErrTransactionMissing) {
+	if err == nil || errors.Is(err, chains.ErrTransactionMissing) || errors.Is(err, chains.ErrTransactionPending) {
 		l.penalties[id] = lookupPenalty{verified: now.Add(time.Minute), expires: now.Add(time.Minute)}
 		return
 	}
@@ -257,11 +256,14 @@ func (l *transactionLookup) round(ctx context.Context, group []lookupLease, hash
 		return results[0].value, results[0].err
 	}
 	for _, r := range results {
-		if r.err != nil || len(r.value) == 0 || !bytes.Equal(r.value, results[0].value) {
+		if r.err != nil {
+			return nil, r.err
+		}
+		if len(r.value) == 0 {
 			return nil, errAgreement
 		}
 	}
-	return results[0].value, nil
+	return chains.AgreeTransaction(group[0].cfg, results[0].value, results[1].value)
 }
 
 // Prefer a pair of operator-selected voters. Otherwise use LiteServer proofs

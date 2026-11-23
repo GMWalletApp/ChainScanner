@@ -65,6 +65,7 @@ func (r *NodeRegistry) lookupHandler(configured map[string]chains.Network, stric
 		}
 		used := map[string]bool{}
 		lastStatus := http.StatusBadGateway
+		var evidenceReason string
 
 		for attempt := 1; attempt <= rounds; attempt++ {
 			if ctx.Err() != nil {
@@ -113,10 +114,22 @@ func (r *NodeRegistry) lookupHandler(configured map[string]chains.Network, stric
 				}{n, hash, v})
 				return
 			}
+			// Keep a disagreement visible if the retry cannot form a fresh pair.
+			switch {
+			case errors.Is(err, chains.ErrEvidenceConflict):
+				evidenceReason = "conflict"
+			case evidenceReason != "conflict" && (errors.Is(err, chains.ErrTransactionData) || errors.Is(err, chains.ErrTransactionMissing)):
+				evidenceReason = "incomplete"
+			case evidenceReason == "" && errors.Is(err, chains.ErrTransactionPending):
+				evidenceReason = "pending"
+			}
 			if !strict && errors.Is(err, chains.ErrTransactionMissing) {
 				http.Error(w, "transaction not found", 404)
 				return
 			}
+		}
+		if strict && evidenceReason != "" {
+			w.Header().Set("X-ChainScanner-Evidence", evidenceReason)
 		}
 		if strict && !single {
 			w.Header().Set("X-ChainScanner-Manual-Review", "required")

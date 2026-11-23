@@ -24,7 +24,7 @@ func TestTransactionLookupRounds(t *testing.T) {
 	}{
 		{"ordinary", false, 6, 200, 1}, {"missing", false, 6, 404, 1}, {"agree with spare nodes", true, 6, 200, 2},
 		{"retry", true, 6, 200, 4}, {"busy retry", true, 6, 200, 4}, {"failed node", true, 6, 200, 4}, {"both disagree", true, 4, 502, 4},
-		{"all missing", true, 6, 502, 4}, {"only two", true, 2, 200, 2}, {"short first group", true, 1, 503, 0}, {"short second group", true, 3, 503, 2},
+		{"all missing", true, 6, 502, 4}, {"pending", true, 4, 502, 4}, {"only two", true, 2, 200, 2}, {"short first group", true, 1, 503, 0}, {"short second group", true, 3, 503, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()
@@ -77,6 +77,9 @@ func TestTransactionLookupRounds(t *testing.T) {
 						return nil, ctx.Err()
 					}
 				}
+				if tc.name == "pending" {
+					return json.RawMessage(`{"receipt":null}`), nil
+				}
 				if tc.name == "missing" || tc.name == "all missing" || tc.name == "failed node" && idx == 1 {
 					return nil, chains.ErrTransactionMissing
 				}
@@ -104,6 +107,10 @@ func TestTransactionLookupRounds(t *testing.T) {
 			h.ServeHTTP(w, req)
 			if w.Code != tc.code || calls != tc.calls {
 				t.Fatalf("%d, calls %d, %s", w.Code, calls, w.Body)
+			}
+			wantReason := map[string]string{"all missing": "incomplete", "both disagree": "conflict", "short second group": "conflict", "pending": "pending"}[tc.name]
+			if got := w.Header().Get("X-ChainScanner-Evidence"); got != wantReason {
+				t.Errorf("evidence reason %q, want %q", got, wantReason)
 			}
 			if tc.code == 200 && !strings.Contains(w.Body.String(), `"amount":9007199254740992`) {
 				t.Fatal(w.Body)

@@ -17,14 +17,15 @@ import (
 	"github.com/tidwall/gjson"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 var ErrTransactionMissing = errors.New("transaction not found")
-var errTxData = errors.New("incomplete or mismatched transaction")
+var ErrTransactionData = errors.New("incomplete or mismatched transaction")
 
 func TransactionHash(network, raw string) (string, error) {
 	if len(raw) > 100 || !Supported(network) {
-		return "", errTxData
+		return "", ErrTransactionData
 	}
 	switch network {
 	case "solana", "sui":
@@ -51,7 +52,7 @@ func TransactionHash(network, raw string) (string, error) {
 			}
 		}
 	}
-	return "", errTxData
+	return "", ErrTransactionData
 }
 
 // LookupRoute resolves paired interfaces to the actual history endpoint. Stream
@@ -85,7 +86,7 @@ func canonicalTransaction(raw []byte) (json.RawMessage, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	if err := dec.Decode(&object); err != nil || len(object) == 0 {
-		return nil, errTxData
+		return nil, ErrTransactionData
 	}
 	return json.Marshal(object)
 }
@@ -127,18 +128,22 @@ func LookupTransaction(ctx context.Context, n Network, hash string, public bool)
 	}
 	defer src.Close()
 	if s, ok := src.(*suiSource); ok {
-		a, e := s.transaction(ctx, hash, []string{"digest", "checkpoint", "timestamp", "transaction", "signatures", "effects", "events", "balance_changes"})
+		tx, e := s.finalizedTransaction(ctx, hash, []string{"digest", "checkpoint", "timestamp", "transaction", "signatures", "effects", "events", "balance_changes"})
 		if status.Code(e) == codes.NotFound {
 			return nil, ErrTransactionMissing
 		}
 		if e != nil {
 			return nil, e
 		}
-		return canonicalTransaction(a.Data)
+		data, e := (protojson.MarshalOptions{UseProtoNames: true}).Marshal(tx)
+		if e != nil {
+			return nil, e
+		}
+		return canonicalTransaction(data)
 	}
 	s, ok := src.(*jsonSource)
 	if !ok {
-		return nil, errTxData
+		return nil, ErrTransactionData
 	}
 	if !public {
 		if e := s.verifyMainnet(ctx); e != nil {
@@ -155,7 +160,7 @@ func LookupTransaction(ctx context.Context, n Network, hash string, public bool)
 			return nil, ErrTransactionMissing
 		}
 		if err == nil && (v.Get("transaction.signatures.0").String() != hash || !v.Get("slot").Exists() || !v.Get("transaction.message").IsObject()) {
-			return nil, errTxData
+			return nil, ErrTransactionData
 		}
 	case n.Name == "aptos":
 		v, err = s.request(ctx, "/v1/transactions/by_hash/"+hash, nil)
@@ -164,7 +169,7 @@ func LookupTransaction(ctx context.Context, n Network, hash string, public bool)
 			return nil, ErrTransactionMissing
 		}
 		if err == nil && (!strings.EqualFold(v.Get("hash").String(), hash) || v.Get("type").String() == "") {
-			return nil, errTxData
+			return nil, ErrTransactionData
 		}
 	case n.Name == "tron":
 		tx, e := s.request(ctx, "/wallet/gettransactionbyid", map[string]string{"value": hash})
@@ -175,18 +180,18 @@ func LookupTransaction(ctx context.Context, n Network, hash string, public bool)
 			return nil, ErrTransactionMissing
 		}
 		if !strings.EqualFold(tx.Get("txID").String(), hash) || !tx.Get("raw_data").IsObject() {
-			return nil, errTxData
+			return nil, ErrTransactionData
 		}
 		info, e := s.request(ctx, "/wallet/gettransactioninfobyid", map[string]string{"value": hash})
 		if e != nil {
 			return nil, e
 		}
 		if !info.IsObject() || len(info.Map()) != 0 && !strings.EqualFold(info.Get("id").String(), hash) {
-			return nil, errTxData
+			return nil, ErrTransactionData
 		}
 		v = gjson.ParseBytes(object(map[string]any{"transaction": json.RawMessage(tx.Raw), "receipt": json.RawMessage(info.Raw)}))
 	default:
-		return nil, errTxData
+		return nil, ErrTransactionData
 	}
 	if err != nil {
 		return nil, err
@@ -203,18 +208,11 @@ func (s *jsonSource) lookupEVM(ctx context.Context, hash string) (json.RawMessag
 		return nil, ErrTransactionMissing
 	}
 	if !strings.EqualFold(tx.Get("hash").String(), hash) || !tx.Get("from").Exists() || !tx.Get("input").Exists() {
-		return nil, errTxData
+		return nil, ErrTransactionData
 	}
 	receipt, e := s.call(ctx, "eth_getTransactionReceipt", hash)
 	if e != nil {
 		return nil, e
-	}
-	if tx.Get("blockHash").Type == gjson.Null {
-		if receipt.Raw != "null" || tx.Get("blockHash").Raw != "null" {
-			return nil, errTxData
-		}
-	} else if !strings.EqualFold(receipt.Get("transactionHash").String(), hash) || tx.Get("blockHash").String() != receipt.Get("blockHash").String() || tx.Get("blockNumber").String() != receipt.Get("blockNumber").String() || !receipt.Get("logs").IsArray() {
-		return nil, errTxData
 	}
 	return canonicalEVMEvidence(tx, receipt)
 }
@@ -235,7 +233,7 @@ func (s *jsonSource) tonIndexTransaction(ctx context.Context, hash string) (json
 	}
 	rows := v.Get("transactions")
 	if !rows.IsArray() {
-		return nil, errTxData
+		return nil, ErrTransactionData
 	}
 	a := rows.Array()
 	if len(a) == 0 {
@@ -243,7 +241,7 @@ func (s *jsonSource) tonIndexTransaction(ctx context.Context, hash string) (json
 	}
 	h, e := TransactionHash("ton", a[0].Get("hash").String())
 	if len(a) != 1 || e != nil || h != hash || !a[0].Get("account").Exists() || !a[0].Get("lt").Exists() {
-		return nil, errTxData
+		return nil, ErrTransactionData
 	}
 	return canonicalTransaction([]byte(a[0].Raw))
 }
@@ -260,7 +258,7 @@ func (s *jsonSource) tonIndexHeight(ctx context.Context) (int64, error) {
 	}
 	h := v.Get("last.seqno")
 	if v.Get("last.global_id").Raw != "-239" || v.Get("last.workchain").Raw != "-1" || h.Type != gjson.Number || h.Int() < 1 {
-		return 0, errTxData
+		return 0, ErrTransactionData
 	}
 	return h.Int(), nil
 }

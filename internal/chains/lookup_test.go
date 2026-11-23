@@ -36,11 +36,11 @@ func TestEVMEvidenceIgnoresProviderOptionalFields(t *testing.T) {
 	receiptA := gjson.Parse(`{
 		"transactionHash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","blockHash":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","blockNumber":"0x10","status":"0x1",
 		"effectiveGasPrice":"0x1","logsBloom":"0x0",
-		"logs":[{"address":"0x3333333333333333333333333333333333333333","topics":["0x01"],"data":"0x02","transactionHash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","blockHash":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","logIndex":"0x0","removed":false}]
+		"logs":[{"address":"0x3333333333333333333333333333333333333333","topics":["0x0000000000000000000000000000000000000000000000000000000000000001"],"data":"0x02","transactionHash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","blockHash":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","logIndex":"0x0","removed":false}]
 	}`)
 	receiptB := gjson.Parse(`{
 		"transactionHash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","blockHash":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","blockNumber":"0x10","status":"0x1",
-		"logs":[{"address":"0x3333333333333333333333333333333333333333","topics":["0x01"],"data":"0x02","transactionHash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","blockHash":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","removed":false}]
+		"logs":[{"address":"0x3333333333333333333333333333333333333333","topics":["0x0000000000000000000000000000000000000000000000000000000000000001"],"data":"0x02","transactionHash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","blockHash":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","removed":false}]
 	}`)
 	a, err := canonicalEVMEvidence(txA, receiptA)
 	if err != nil {
@@ -71,7 +71,7 @@ func TestEVMEvidenceIgnoresProviderOptionalFields(t *testing.T) {
 
 func TestHashLookupRejectsWrongTransactionOrReceipt(t *testing.T) {
 	hash := "0x" + strings.Repeat("ab", 32)
-	for _, failure := range []string{"", "wrong transaction", "wrong block", "wrong receipt", "wrong chain"} {
+	for _, failure := range []string{"", "equivalent block", "wrong transaction", "wrong block", "wrong receipt", "wrong chain"} {
 		t.Run(failure, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var req struct {
@@ -94,7 +94,7 @@ func TestHashLookupRejectsWrongTransactionOrReceipt(t *testing.T) {
 					if failure == "wrong transaction" {
 						h = "0x0"
 					}
-					value = map[string]any{"hash": h, "from": hash, "to": hash, "input": "0x", "value": "0x0", "blockHash": hash, "blockNumber": "0x1"}
+					value = map[string]any{"hash": h, "from": hash[:42], "to": hash[:42], "input": "0x", "value": "0x0", "blockHash": hash, "blockNumber": "0x1"}
 				case "eth_getTransactionReceipt":
 					h, b := hash, hash
 					if failure == "wrong receipt" {
@@ -103,7 +103,12 @@ func TestHashLookupRejectsWrongTransactionOrReceipt(t *testing.T) {
 					if failure == "wrong block" {
 						b = "0xff"
 					}
-					value = map[string]any{"transactionHash": h, "blockHash": b, "blockNumber": "0x1", "status": "0x1", "logs": []any{}}
+					number := "0x1"
+					if failure == "equivalent block" {
+						b = strings.ToUpper(b)
+						number = "0x01"
+					}
+					value = map[string]any{"transactionHash": h, "blockHash": b, "blockNumber": number, "status": "0x1", "logs": []any{}}
 				default:
 					t.Errorf("unexpected %s", req.Method)
 				}
@@ -111,7 +116,7 @@ func TestHashLookupRejectsWrongTransactionOrReceipt(t *testing.T) {
 			}))
 			defer srv.Close()
 			v, e := LookupTransaction(context.Background(), Network{Name: "base", Protocol: "http", URL: srv.URL}, hash, false)
-			if (failure == "") != (e == nil) || e == nil && !strings.Contains(string(v), "receipt") {
+			if (failure == "" || failure == "equivalent block") != (e == nil) || e == nil && !strings.Contains(string(v), "receipt") {
 				t.Fatal(string(v), e)
 			}
 		})

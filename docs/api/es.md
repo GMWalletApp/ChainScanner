@@ -51,11 +51,11 @@ admin() { curl -sS -i -H "Authorization: Bearer $ADMIN" -H 'Content-Type: applic
 
 Usa el token del consumidor y una red configurada. No se necesita una suscripción. La respuesta incluye `network`, `hash` y `result`.
 
-La ruta normal elige un nodo libre al azar y da prioridad a los sanos. La ruta estricta consulta dos nodos distintos en paralelo. Si ambos devuelven el mismo resultado completo, lo devuelve. En caso contrario, prueba una vez más con dos nodos nuevos. Los errores y las transacciones ausentes no cuentan como votos. El orden de las claves JSON y los espacios no afectan la comparación.
+La ruta normal elige un nodo libre al azar y da prioridad a los sanos. La ruta estricta consulta dos nodos distintos en paralelo. Devuelve los datos de pago de esa red que ambos nodos corroboran. En caso contrario, prueba una vez más con dos nodos nuevos. Los errores y las transacciones ausentes no cuentan como votos. El orden de las claves JSON y los espacios no afectan la comparación.
 
 Registra dos respaldos independientes en la misma red, uno por solicitud. Los bloques fallidos se reparten por turnos entre respaldos aptos. La consulta estricta prefiere dos respaldos y puede completar el par con nodos normales. La consulta normal omite los de respaldo. Ambos modos omiten nodos en pausa. Cada ronda permite hasta 4 segundos para seleccionar nodos y 9 para consultar la transacción. 400 indica datos inválidos, 401 acceso denegado, 404 ausencia en la consulta normal, 502 fallo de consulta o consenso y 503 falta de nodos disponibles.
 
-En TON, un índice v3 localiza la transacción. Dos LiteServers ADNL directos con hosts y claves diferentes verifican la inclusión. Se devuelven el BOC, el hash, la cuenta, LT, la fecha y las raíces de ambos bloques. Si no hay un par de LiteServers, dos índices v3 distintos pueden cotejar el registro completo.
+En TON, un índice v3 localiza la transacción. Dos LiteServers ADNL directos con hosts y claves diferentes verifican la inclusión. Se devuelven el BOC, el hash, la cuenta, LT, la fecha y las raíces de ambos bloques. Si no hay un par de LiteServers, dos índices v3 distintos pueden cotejar la ubicación de la transacción y los datos de los mensajes.
 
 ```sh
 consumer "$BASE/v1/transactions/base/$TX_HASH"

@@ -51,11 +51,11 @@ admin() { curl -sS -i -H "Authorization: Bearer $ADMIN" -H 'Content-Type: applic
 
 Gửi mã xác thực của dịch vụ và ID mạng đã cấu hình. Không cần đăng ký địa chỉ. Phản hồi chứa `network`, `hash` và `result`.
 
-Truy vấn thường chọn ngẫu nhiên một nút rảnh, ưu tiên nút đang hoạt động tốt. Truy vấn nghiêm ngặt gửi yêu cầu đồng thời đến hai nút khác nhau. Nếu cả hai trả về cùng một kết quả giao dịch đầy đủ, dịch vụ trả kết quả. Nếu không, dịch vụ thử lại một lần với hai nút chưa dùng. Lỗi và phản hồi không tìm thấy giao dịch không được tính. Thứ tự khóa JSON và khoảng trắng không ảnh hưởng đến so sánh.
+Truy vấn thường chọn ngẫu nhiên một nút rảnh, ưu tiên nút đang hoạt động tốt. Truy vấn nghiêm ngặt gửi yêu cầu đồng thời đến hai nút khác nhau. Dịch vụ trả về các trường xác minh thanh toán của mạng khi cả hai nút cùng xác nhận. Nếu không, dịch vụ thử lại một lần với hai nút chưa dùng. Lỗi và phản hồi không tìm thấy giao dịch không được tính. Thứ tự khóa JSON và khoảng trắng không ảnh hưởng đến so sánh.
 
 Đăng ký riêng từng nút để thêm hai nút dự phòng độc lập trên cùng mạng. Các nút đủ điều kiện luân phiên quét bù. Truy vấn nghiêm ngặt ưu tiên hai nút dự phòng và có thể thêm nút thường nếu thiếu. Tra cứu thường bỏ qua nút dự phòng. Cả hai chế độ bỏ qua các nút đang tạm dừng. Mỗi lượt có tối đa 4 giây để chọn nút và 9 giây để tra giao dịch. HTTP 400 là đầu vào sai, 401 là lỗi xác thực, 404 là không tìm thấy khi tra thường, 502 là truy vấn lỗi hoặc kết quả khác nhau và 503 là thiếu nút khả dụng.
 
-Trên TON, chỉ mục v3 cung cấp vị trí giao dịch. Hai LiteServer ADNL trực tiếp có máy chủ và khóa khác nhau kiểm tra bằng chứng giao dịch nằm trong khối. Kết quả gồm BOC, mã băm, tài khoản, LT, thời gian và hai mã băm gốc của khối shard và masterchain. Nếu không đủ hai LiteServer, hai chỉ mục v3 khác nhau có thể đối chiếu bản ghi đầy đủ.
+Trên TON, chỉ mục v3 cung cấp vị trí giao dịch. Hai LiteServer ADNL trực tiếp có máy chủ và khóa khác nhau kiểm tra bằng chứng giao dịch nằm trong khối. Kết quả gồm BOC, mã băm, tài khoản, LT, thời gian và hai mã băm gốc của khối shard và masterchain. Nếu không đủ hai LiteServer, hai chỉ mục v3 khác nhau có thể đối chiếu vị trí giao dịch và dữ liệu thông điệp.
 
 ```sh
 consumer "$BASE/v1/transactions/base/$TX_HASH"
