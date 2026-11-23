@@ -16,7 +16,7 @@ ChainScanner quét khối trên từng mạng một lần cho tất cả các d�
 Mỗi ứng dụng tự quản lý logic nghiệp vụ, trạng thái đơn hàng và số dư ví. ChainScanner cung cấp hạ tầng dùng chung để đăng ký theo dõi địa chỉ, quét khối và chuyển sự kiện đến các dịch vụ đã đăng ký.
 
 > [!IMPORTANT]
-> **Hạn mức RPC công cộng khi tra cứu giao dịch thường xuyên trên Solana, TON (GRAM) và Plasma.** Truy vấn nghiêm ngặt thử một nút dự phòng đã cấu hình trước. Nếu không có kết quả hợp lệ, hai nhà cung cấp độc lập phải xác nhận. Trong một lần thử nghiệm 15 phút trên mainnet với các RPC công cộng miễn phí, cả ba lượt tra cứu nghiêm ngặt trên Solana và cả ba lượt trên Plasma đều thất bại. Trên TON, cả ba lượt đều thành công. Nếu dự kiến có nhiều truy vấn, hãy cấu hình hai nút dự phòng cho mỗi mạng, mỗi nút từ một nhà cung cấp khác nhau. ChainScanner dùng chung kết quả quét khối cho các địa chỉ theo dõi và các dịch vụ đăng ký, giúp giảm số yêu cầu RPC trùng lặp. Nếu chỉ thỉnh thoảng cần quét lại khối và xác minh giao dịch, gói miễn phí hoặc gói cơ bản của phần lớn nhà cung cấp thường là đủ. Khi lưu lượng cao kéo dài, hãy kiểm tra giới hạn yêu cầu mỗi giây và hạn mức hằng tháng. [Cấu hình nút dự phòng](docs/api/vi.md#fallback) · [So sánh các nhà cung cấp nút dự phòng](#fallback-providers)
+> Tra cứu theo mã băm ưu tiên nút dự phòng, loại các nút đã cung cấp giao dịch khi quét khối và trả giao dịch hợp lệ đầu tiên. [So sánh các nhà cung cấp nút dự phòng](#fallback-providers)
 
 ## Tình huống sử dụng
 
@@ -42,7 +42,7 @@ Trường `from_height` trong phản hồi cho biết khối đầu tiên đư�
 
 ## Nút dự phòng được khuyến nghị
 
-Đăng ký riêng từng nút để thêm hai nút dự phòng độc lập trên cùng mạng. Các nút đủ điều kiện luân phiên quét bù. Truy vấn nghiêm ngặt thử một nút dự phòng trước, sau đó dùng hai nút độc lập nếu không nhận được dữ liệu hợp lệ. [API](docs/api/vi.md#fallback)
+Đăng ký riêng từng nút dự phòng. Các nút đủ điều kiện luân phiên quét bù các khoảng bị lỗi. [API](docs/api/vi.md#fallback)
 
 ```sh
 BASE=http://127.0.0.1:9081

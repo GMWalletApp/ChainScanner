@@ -76,47 +76,39 @@ func TestStrictRulesOnRPCResponses(t *testing.T) {
 		{"solana", "solana", "meta.postTokenBalances", omit{}, true, "meta.err", "meta.postTokenBalances"},
 		{"solana", "solana", "meta.err", omit{}, false, "", ""},
 		{"solana", "solana", "meta.err", false, false, "", ""},
-		{"solana", "solana", "transaction.message.instructions.0.data", "changed", false, "", ""},
+		{"solana", "solana", "transaction.message.instructions.0.data", "changed", true, "transaction.message.instructions.0.data", ""},
 		{"aptos", "aptos-epilogue", "vm_status", omit{}, true, "success", "events"},
 		{"aptos", "aptos", "vm_status", omit{}, true, "events.0.data.amount", "vm_status"},
-		{"aptos", "aptos", "success", false, false, "", ""},
-		{"aptos", "aptos", "events.0.data.amount", "6001", false, "", ""},
-		{"aptos", "aptos", "changes.0.address", "0x123", false, "", ""},
+		{"aptos", "aptos", "success", false, true, "success", ""},
+		{"aptos", "aptos", "events.0.data.amount", "6001", true, "events.0.data.amount", ""},
+		{"aptos", "aptos", "changes.0.address", "0x123", true, "changes.0.address", ""},
 		{"sui", "sui", "effects.status.error", omit{}, true, "effects.status.success", "effects.status.error"},
 		{"sui", "sui", "timestamp", omit{}, true, "balance_changes.0.amount", "timestamp"},
-		{"sui", "sui", "balance_changes.0.amount", "12345678901234567890", false, "", ""},
+		{"sui", "sui", "balance_changes.0.amount", "12345678901234567890", true, "balance_changes.0.amount", ""},
 		{"sui", "sui", "effects.status.success", omit{}, false, "", ""},
 		{"tron", "tron", "receipt.receipt.energy_usage", omit{}, true, "receipt.log.0.data", "receipt.receipt.energy_usage"},
 		{"tron", "tron-native", "receipt.receipt", omit{}, true, "transaction.ret.0.contractRet", "receipt.receipt"},
-		{"tron", "tron-native", "receipt.result", "FAILED", false, "", ""},
-		{"tron", "tron-native", "receipt.receipt.result", "REVERT", false, "", ""},
+		{"tron", "tron-native", "receipt.result", "FAILED", true, "receipt.result", ""},
+		{"tron", "tron-native", "receipt.receipt.result", "REVERT", true, "receipt.receipt.result", ""},
 		{"tron", "tron", "transaction.raw_data.contract.0.parameter.value.rpc_extension", "extra", true, "transaction.raw_data.contract.0.parameter.value.data", "transaction.raw_data.contract.0.parameter.value.rpc_extension"},
 		{"tron", "tron", "receipt.log.0.address", "other", false, "", ""},
-		{"tron", "tron", "receipt.log.0.data", omit{}, false, "", ""},
+		{"tron", "tron", "receipt.log.0.data", omit{}, true, "", ""},
 		{"ton", "ton", "in_msg.message_content.decoded", omit{}, true, "in_msg.value", "in_msg.message_content.decoded"},
 		{"ton", "ton", "finality", omit{}, true, "mc_block_seqno", "finality"},
 		{"ton", "ton", "emulated", true, false, "", ""},
-		{"ton", "ton", "in_msg.value", "123456", false, "", ""},
-		{"ton", "ton", "mc_block_seqno", 1, false, "", ""},
+		{"ton", "ton", "in_msg.value", "123456", true, "in_msg.value", ""},
+		{"ton", "ton", "mc_block_seqno", 1, true, "mc_block_seqno", ""},
 	} {
 		t.Run(tc.fixture+"/"+tc.path, func(t *testing.T) {
 			original := rpcFixture(t, tc.fixture)
 			other := modifyEvidence(t, original, tc.path, tc.change)
 			n := Network{Name: tc.network, Protocol: "toncenter-v3"}
-			for _, pair := range [][2]json.RawMessage{{original, other}, {other, original}} {
-				out, err := AgreeTransaction(n, pair[0], pair[1])
-				if (err == nil) != tc.agree {
-					t.Fatalf("agreement=%v error=%v", tc.agree, err)
-				}
-				if !tc.agree {
-					if len(out) > 0 {
-						t.Fatal("failed vote returned evidence")
-					}
-					continue
-				}
-				if !gjson.GetBytes(out, tc.keep).Exists() || gjson.GetBytes(out, tc.drop).Exists() {
-					t.Fatalf("keep %s, omit %s: %s", tc.keep, tc.drop, out)
-				}
+			out, err := TransactionEvidence(n, other)
+			if (err == nil) != tc.agree {
+				t.Fatalf("valid=%v err=%v", tc.agree, err)
+			}
+			if tc.keep != "" && !gjson.GetBytes(out, tc.keep).Exists() || tc.drop != "" && gjson.GetBytes(out, tc.drop).Exists() {
+				t.Fatal(string(out))
 			}
 		})
 	}
@@ -167,7 +159,7 @@ func TestStrictPendingHasNoConfirmedResult(t *testing.T) {
 		{"aptos", `{"type":"pending_transaction"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := AgreeTransaction(Network{Name: tc.name}, json.RawMessage(tc.raw), json.RawMessage(tc.raw))
+			result, err := TransactionEvidence(Network{Name: tc.name}, json.RawMessage(tc.raw))
 			if err != ErrTransactionPending || result != nil {
 				t.Fatal(string(result), err)
 			}
@@ -184,11 +176,11 @@ func TestFallbackProjectsChainEvidence(t *testing.T) {
 			}
 			input := rpcFixture(t, name)
 			withExtension := modifyEvidence(t, input, "diagnostic", "one provider only")
-			got, err := FallbackTransactionEvidence(n, withExtension)
+			got, err := TransactionEvidence(n, withExtension)
 			if err != nil {
 				t.Fatal(err)
 			}
-			want, err := AgreeTransaction(n, withExtension, input)
+			want, err := TransactionEvidence(n, input)
 			if err != nil || !bytes.Equal(got, want) || gjson.GetBytes(got, "diagnostic").Exists() {
 				t.Fatalf("inconsistent evidence: %s, %v", got, err)
 			}

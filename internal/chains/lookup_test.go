@@ -3,6 +3,7 @@ package chains
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -120,5 +121,24 @@ func TestHashLookupRejectsWrongTransactionOrReceipt(t *testing.T) {
 				t.Fatal(string(v), e)
 			}
 		})
+	}
+}
+
+func TestAptosTransactionMissingRequiresStructuredNotFound(t *testing.T) {
+	for _, tc := range []struct {
+		body    string
+		missing bool
+	}{
+		{`{"error_code":"transaction_not_found"}`, true},
+		{"<html>Not Found</html>", false},
+		{`{"error_code":"api_not_found"}`, false},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { http.Error(w, tc.body, http.StatusNotFound) }))
+		s := jsonSource{n: Network{Name: "aptos", URL: srv.URL + "/v1"}, http: srv.Client()}
+		_, err := s.request(t.Context(), "/v1/transactions/by_hash/hash", nil)
+		srv.Close()
+		if err == nil || errors.Is(err, ErrTransactionMissing) != tc.missing {
+			t.Fatalf("%s: %v", tc.body, err)
+		}
 	}
 }

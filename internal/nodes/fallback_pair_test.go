@@ -16,7 +16,7 @@ import (
 	"github.com/GMWalletApp/ChainScanner/internal/engine"
 )
 
-func TestFallbackPairsThroughAdminAndStrictAPI(t *testing.T) {
+func TestFallbackSelectionThroughAdminAndStrictAPI(t *testing.T) {
 	store, err := engine.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -75,62 +75,54 @@ func TestFallbackPairsThroughAdminAndStrictAPI(t *testing.T) {
 		}
 		return sample, nil
 	}
-	path := "/v1/transactions/base/" + hash + "/strict"
-	check := func(suffix, mode string, wantCode, wantCalls int) {
+	path := "/v1/transactions/base/" + hash
+	check := func(suffix string, wantCode, wantCalls int) {
 		t.Helper()
 		calls = nil
 		w := call("GET", path+suffix, "", client, wantCode)
-		if len(calls) != wantCalls || gjson.Get(w.Body.String(), "verification").Str != mode {
+		if len(calls) != wantCalls {
 			t.Fatalf("%s: calls %v, response %s", suffix, calls, w.Body.String())
 		}
 		if w.Code == 200 && gjson.Get(w.Body.String(), "result.transaction.hash").Str != hash {
 			t.Fatal("wrong transaction", w.Body.String())
 		}
 	}
-	check("", "fallback_rpc", 200, 1)
-	w := call("GET", path+"?rounds=1", "", client, 200)
-	source := w.Header().Get("X-ChainScanner-Pair")
-	if len(source) != 64 || w.Header().Get("X-ChainScanner-Strict-Rounds") != "1" {
-		t.Fatal(w.Header())
-	}
-	calls = nil
-	retry := httptest.NewRequest("GET", path+"?rounds=1", nil)
-	retry.Header.Set("Authorization", "Bearer "+client)
-	retry.Header.Set("X-ChainScanner-Exclude", source)
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, retry)
-	if w.Code != 200 || len(calls) != 2 || gjson.Get(w.Body.String(), "verification").Str != "two_providers" || strings.Contains(w.Header().Get("X-ChainScanner-Pair"), source) {
-		t.Fatal(w.Code, w.Header(), calls)
-	}
-	check("?fallback_only=true", "fallback_rpc", 200, 1)
+	check("", 200, 1)
+	check("?fallback_only=true", 200, 1)
 	if !strings.Contains(calls[0], "paid-") {
 		t.Fatal(calls)
 	}
 	call("PUT", "/v1/admin/blacklist/keyword:paid-two", "", admin, 204)
-	check("?fallback_only=true", "fallback_rpc", 200, 1)
-	// Without another usable fallback, fallback-only cannot form a pair.
+	check("?fallback_only=true", 200, 1)
+	// A pending transaction is retryable.
 	fallbackBody = json.RawMessage(`{"receipt":null}`)
-	check("?fallback_only=true&rounds=1", "", 503, 1)
-	// Two regular endpoints can still verify a payment after one fallback
-	// returns pending, malformed data, an RPC error or a missing transaction.
+	check("?fallback_only=true", 502, 1)
+	// The next regular endpoint can verify after a retryable fallback failure.
 	call("POST", "/v1/admin/nodes", `{"network":"base","url":"https://regular-two.example","protocol":"http"}`, admin, 201)
 	for _, tc := range []struct {
 		raw json.RawMessage
 		err error
 	}{
-		{fallbackBody, nil}, {json.RawMessage(`{}`), nil}, {nil, errors.New("upstream unavailable")}, {nil, chains.ErrTransactionMissing},
+		{fallbackBody, nil}, {json.RawMessage(`{}`), nil}, {nil, errors.New("upstream unavailable")},
 	} {
 		fallbackBody, fallbackErr = tc.raw, tc.err
-		check("?rounds=1", "two_providers", 200, 3)
-		if !strings.Contains(calls[0], "paid-one") || calls[1] == calls[2] || !strings.Contains(calls[1], "regular") || !strings.Contains(calls[2], "regular") {
+		check("", 200, 2)
+		if !strings.Contains(calls[0], "paid-one") || !strings.Contains(calls[1], "regular") {
 			t.Fatal(calls)
 		}
 	}
-	// An ordinary request continues to use one regular endpoint.
-	w = call("GET", strings.TrimSuffix(path, "/strict"), "", client, 200)
-	if gjson.Get(w.Body.String(), "verification").Exists() || !strings.Contains(calls[len(calls)-1], "regular") {
-		t.Fatal(w.Body, calls)
+	// An observed transaction must exclude its original source, including a fallback.
+	fallbackBody, fallbackErr = sample, nil
+	id := chains.SourceIDs(chains.Network{Name: "base", URL: "https://paid-one.example/other-key"})[0]
+	if _, err := r.db.Exec("INSERT INTO transaction_sources VALUES(?,?,?)", "base", hash, id); err != nil {
+		t.Fatal(err)
 	}
+	check("?observed=true", 200, 1)
+	if !strings.Contains(calls[0], "regular") {
+		t.Fatal(calls)
+	}
+	check("?fallback_only=true&observed=true", 503, 0)
+	call("GET", path+"/strict", "", client, 404)
 
 }
 
@@ -149,7 +141,7 @@ func TestRepairsRotateIndependentlyOfFreshBlocks(t *testing.T) {
 	}
 }
 
-func TestTONFallbackIndexesVoteWithoutPublicLocator(t *testing.T) {
+func TestTONFallbackIndexEligibleWithoutPublicLocator(t *testing.T) {
 	store, err := engine.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -166,19 +158,15 @@ func TestTONFallbackIndexesVoteWithoutPublicLocator(t *testing.T) {
 			t.Fatal(n, err)
 		}
 	}
-	nodes, err := r.lookupCandidates(ctx, "ton", true)
+	nodes, err := r.lookupCandidates(ctx, "ton", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	r.lookup.probe = func(context.Context, chains.Network, bool) error { return nil }
-	group, _ := r.tonGroup(ctx, nodes, map[string]bool{}, "unused-hash")
-	if len(group) != 2 {
-		t.Fatal("missing funded TON pair")
-	}
-	for _, v := range group {
-		v.release()
-		if !v.fallback || v.cfg.Protocol != "toncenter-v3" {
-			t.Fatal(v.cfg)
+	for _, c := range nodes {
+		if c.fallback && c.cfg.Protocol == "toncenter-v3" {
+			return
 		}
 	}
+	t.Fatal("no configured TON index available for transaction lookup")
 }

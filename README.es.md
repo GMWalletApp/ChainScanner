@@ -16,7 +16,7 @@ Con ChainScanner, todas las suscripciones de una red comparten el escaneo de blo
 Cada aplicación gestiona su lógica de negocio, el estado de sus pedidos y los saldos de sus carteras. ChainScanner ofrece una infraestructura compartida para suscribirse a direcciones, escanear bloques y distribuir eventos.
 
 > [!IMPORTANT]
-> **Límites de los RPC públicos para consultas frecuentes en Solana, TON (GRAM) y Plasma.** La consulta estricta prueba primero un respaldo configurado. Si falla, se requieren dos proveedores independientes. En una prueba de 15 minutos en la red principal con RPC públicos gratuitos, fallaron las tres consultas estrictas en Solana y las tres en Plasma. En TON se completaron las tres. Si prevés muchas consultas, configura dos nodos de respaldo por red, uno de cada proveedor. ChainScanner comparte la lectura de cada bloque entre todas las direcciones y los suscriptores, lo que reduce las solicitudes RPC duplicadas. Para recuperar bloques y verificar transacciones de forma ocasional, suele bastar el plan gratuito o básico de la mayoría de los proveedores. Para tráfico sostenido, revisa el límite de solicitudes por segundo y la cuota mensual. [Configurar nodos de respaldo](docs/api/es.md#fallback) · [Comparar proveedores de respaldo](#fallback-providers)
+> La consulta por hash da prioridad a los respaldos, excluye los nodos que entregaron la actividad observada y devuelve la primera transacción válida. [Comparar proveedores de respaldo](#fallback-providers)
 
 ## Casos de uso
 
@@ -42,7 +42,7 @@ La respuesta indica en `from_height` el primer bloque que cubre la suscripción.
 
 ## Nodo de respaldo recomendado
 
-Registra dos respaldos independientes en la misma red, uno por solicitud. Los bloques fallidos se reparten por turnos entre respaldos aptos. La consulta estricta prueba primero un respaldo y pasa a dos nodos independientes si no obtiene datos válidos. [API](docs/api/es.md#fallback)
+Registre cada respaldo por separado. Los intervalos fallidos se reparten entre los respaldos aptos. [API](docs/api/es.md#fallback)
 
 ```sh
 BASE=http://127.0.0.1:9081

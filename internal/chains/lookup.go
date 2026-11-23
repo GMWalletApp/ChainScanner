@@ -7,13 +7,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/btcsuite/btcutil/base58"
-	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/tidwall/gjson"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -157,17 +155,31 @@ func LookupTransaction(ctx context.Context, n Network, hash string, public bool)
 	case n.Name == "solana":
 		v, err = s.call(ctx, "getTransaction", hash, map[string]any{"commitment": "finalized", "encoding": "json", "maxSupportedTransactionVersion": 1})
 		if err == nil && v.Raw == "null" {
-			return nil, ErrTransactionMissing
+			// A finalized lookup also returns null for a transaction that is still
+			// confirming. Check signature history before reporting it absent.
+			status, e := s.call(ctx, "getSignatureStatuses", []string{hash}, map[string]bool{"searchTransactionHistory": true})
+			if e != nil {
+				return nil, e
+			}
+			values := status.Get("value").Array()
+			if !status.Get("value").IsArray() || len(values) != 1 {
+				return nil, ErrTransactionData
+			}
+			if values[0].Raw == "null" {
+				return nil, ErrTransactionMissing
+			}
+			switch values[0].Get("confirmationStatus").Str {
+			case "confirmed", "processed":
+				return nil, ErrTransactionPending
+			default:
+				return nil, ErrTransactionData
+			}
 		}
 		if err == nil && (v.Get("transaction.signatures.0").String() != hash || !v.Get("slot").Exists() || !v.Get("transaction.message").IsObject()) {
 			return nil, ErrTransactionData
 		}
 	case n.Name == "aptos":
 		v, err = s.request(ctx, "/v1/transactions/by_hash/"+hash, nil)
-		var httpErr rpc.HTTPError
-		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
-			return nil, ErrTransactionMissing
-		}
 		if err == nil && (!strings.EqualFold(v.Get("hash").String(), hash) || v.Get("type").String() == "") {
 			return nil, ErrTransactionData
 		}
@@ -214,7 +226,10 @@ func (s *jsonSource) lookupEVM(ctx context.Context, hash string) (json.RawMessag
 	if e != nil {
 		return nil, e
 	}
-	return canonicalEVMEvidence(tx, receipt)
+	if _, err := canonicalEVMEvidence(tx, receipt); err != nil {
+		return nil, err
+	}
+	return canonicalTransaction(object(map[string]json.RawMessage{"transaction": json.RawMessage(tx.Raw), "receipt": json.RawMessage(receipt.Raw)}))
 }
 
 func lookupTON(ctx context.Context, n Network, hash string) (json.RawMessage, error) {

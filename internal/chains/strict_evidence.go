@@ -1,7 +1,6 @@
 package chains
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -14,23 +13,20 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// Rules operate on both replies so a field supplied by only one provider
-// cannot enter the verified response. nil means omit, RawMessage("null")
-// preserves an explicit protocol null (e.g. Solana meta.err on success).
-type evidenceRule func(a, b gjson.Result) (any, error)
+// A nil value omits an optional field. RawMessage("null") preserves a protocol null.
+type evidenceRule func(gjson.Result) (any, error)
 
 var ErrTransactionPending = errors.New("transaction is pending confirmation")
-var ErrEvidenceConflict = errors.New("transaction evidence differs")
 
 type evidenceFields map[string]evidenceRule
 
-func (fields evidenceFields) match(a, b gjson.Result) (any, error) {
-	if !a.IsObject() || !b.IsObject() {
+func (fields evidenceFields) project(a gjson.Result) (any, error) {
+	if !a.IsObject() {
 		return nil, ErrTransactionData
 	}
 	out := make(map[string]any, len(fields))
 	for _, key := range slices.Sorted(maps.Keys(fields)) {
-		v, err := fields[key](a.Get(key), b.Get(key))
+		v, err := fields[key](a.Get(key))
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", key, err)
 		}
@@ -43,59 +39,53 @@ func (fields evidenceFields) match(a, b gjson.Result) (any, error) {
 
 // Input comes from canonicalTransaction, which sorts object keys and keeps
 // integers exact. Move values are defined by on-chain application types.
-func equalValue(a, b gjson.Result) (any, error) {
-	if !a.Exists() || !b.Exists() {
+func rawValue(a gjson.Result) (any, error) {
+	if !a.Exists() {
 		return nil, ErrTransactionData
-	}
-	if a.Raw != b.Raw {
-		return nil, ErrEvidenceConflict
 	}
 	return json.RawMessage(a.Raw), nil
 }
 
-func textValue(a, b gjson.Result) (any, error) {
-	if a.Type != gjson.String || b.Type != gjson.String || a.Str == "" || b.Str == "" {
+func textValue(a gjson.Result) (any, error) {
+	if a.Type != gjson.String || a.Str == "" {
 		return nil, ErrTransactionData
 	}
-	return equalValue(a, b)
+	return rawValue(a)
 }
 
 // A compiled Solana instruction can have empty instruction data.
-func stringValue(a, b gjson.Result) (any, error) {
-	if a.Type != gjson.String || b.Type != gjson.String {
+func stringValue(a gjson.Result) (any, error) {
+	if a.Type != gjson.String {
 		return nil, ErrTransactionData
 	}
-	return equalValue(a, b)
+	return rawValue(a)
 }
 
-func boolValue(a, b gjson.Result) (any, error) {
-	if (a.Type != gjson.True && a.Type != gjson.False) || (b.Type != gjson.True && b.Type != gjson.False) {
+func boolValue(a gjson.Result) (any, error) {
+	if a.Type != gjson.True && a.Type != gjson.False {
 		return nil, ErrTransactionData
 	}
-	return equalValue(a, b)
+	return rawValue(a)
 }
 
 func optional(rule evidenceRule) evidenceRule {
-	return func(a, b gjson.Result) (any, error) {
-		if a.Type == gjson.Null || b.Type == gjson.Null {
+	return func(a gjson.Result) (any, error) {
+		if a.Type == gjson.Null {
 			return nil, nil
 		}
-		return rule(a, b)
+		return rule(a)
 	}
 }
 
 func list(rule evidenceRule) evidenceRule {
-	return func(a, b gjson.Result) (any, error) {
-		if !a.IsArray() || !b.IsArray() {
+	return func(a gjson.Result) (any, error) {
+		if !a.IsArray() {
 			return nil, ErrTransactionData
 		}
-		left, right := a.Array(), b.Array()
-		if len(left) != len(right) {
-			return nil, ErrEvidenceConflict
-		}
-		out := make([]any, len(left))
-		for i := range left {
-			v, err := rule(left[i], right[i])
+		items := a.Array()
+		out := make([]any, len(items))
+		for i := range items {
+			v, err := rule(items[i])
 			if err != nil {
 				return nil, fmt.Errorf("[%d]: %w", i, err)
 			}
@@ -105,55 +95,22 @@ func list(rule evidenceRule) evidenceRule {
 	}
 }
 
-// Missing historic metadata cannot vouch for a transfer reported by its peer.
-func optionalList(rule evidenceRule) evidenceRule {
-	match := list(rule)
-	return func(a, b gjson.Result) (any, error) {
-		if a.Type == gjson.Null || b.Type == gjson.Null {
-			if len(a.Array()) > 0 || len(b.Array()) > 0 {
-				return nil, ErrTransactionData
-			}
-			return nil, nil
-		}
-		return match(a, b)
-	}
-}
-
-func loadedAddresses(a, b gjson.Result) (any, error) {
-	if a.Type == gjson.Null || b.Type == gjson.Null {
-		for _, v := range []gjson.Result{a, b} {
-			if len(v.Get("writable").Array())+len(v.Get("readonly").Array()) > 0 {
-				return nil, ErrTransactionData
-			}
-		}
-		return nil, nil
-	}
-	return evidenceFields{"writable": list(textValue), "readonly": list(textValue)}.match(a, b)
-}
-
-// Protobuf omits empty repeated fields. Never discard a nonempty list when
-// the other provider omits it.
+// Protobuf omits empty repeated fields.
 func repeated(rule evidenceRule) evidenceRule {
-	match := list(rule)
-	return func(a, b gjson.Result) (any, error) {
-		if !a.Exists() {
-			a = gjson.Parse("[]")
+	items := list(rule)
+	return func(v gjson.Result) (any, error) {
+		if !v.Exists() {
+			return []any{}, nil
 		}
-		if !b.Exists() {
-			b = gjson.Parse("[]")
-		}
-		return match(a, b)
+		return items(v)
 	}
 }
 
-func solExecutionError(a, b gjson.Result) (any, error) {
-	for _, v := range []gjson.Result{a, b} {
-		// Solana serializes TransactionError as an enum or tagged object.
-		if v.Raw != "null" && v.Type != gjson.String && !v.IsObject() {
-			return nil, ErrTransactionData
-		}
+func solExecutionError(v gjson.Result) (any, error) {
+	if v.Raw != "null" && v.Type != gjson.String && !v.IsObject() {
+		return nil, ErrTransactionData
 	}
-	return equalValue(a, b)
+	return rawValue(v)
 }
 
 var solInstruction = evidenceFields{
@@ -162,7 +119,7 @@ var solInstruction = evidenceFields{
 
 var solBalance = evidenceFields{
 	"accountIndex": uintValue, "mint": textValue, "owner": optional(textValue),
-	"uiTokenAmount": evidenceFields{"amount": decimalText, "decimals": uintValue}.match,
+	"uiTokenAmount": evidenceFields{"amount": decimalText, "decimals": uintValue}.project,
 }
 
 var solEvidence = evidenceFields{
@@ -170,113 +127,93 @@ var solEvidence = evidenceFields{
 	"transaction": evidenceFields{
 		"signatures": list(textValue),
 		"message": evidenceFields{
-			"accountKeys": list(textValue), "instructions": list(solInstruction.match),
+			"accountKeys": list(textValue), "instructions": list(solInstruction.project),
 			"recentBlockhash": textValue,
-		}.match,
-	}.match,
+		}.project,
+	}.project,
 	"meta": evidenceFields{
 		"err":               solExecutionError,
-		"innerInstructions": optionalList(evidenceFields{"index": uintValue, "instructions": list(solInstruction.match)}.match),
-		"loadedAddresses":   loadedAddresses,
-		"postTokenBalances": optionalList(solBalance.match),
-	}.match,
+		"innerInstructions": optional(list(evidenceFields{"index": uintValue, "instructions": list(solInstruction.project)}.project)),
+		"loadedAddresses":   optional(evidenceFields{"writable": list(textValue), "readonly": list(textValue)}.project),
+		"postTokenBalances": optional(list(solBalance.project)),
+	}.project,
 }
 
 var aptosEvidence = evidenceFields{
 	"hash": textValue, "type": textValue, "version": decimalText, "timestamp": decimalText, "success": boolValue,
-	"events":  optionalList(evidenceFields{"type": textValue, "data": equalValue}.match),
+	"events":  optional(list(evidenceFields{"type": textValue, "data": rawValue}.project)),
 	"changes": list(aptosChange),
 }
 
-func aptosChange(a, b gjson.Result) (any, error) {
+func aptosChange(a gjson.Result) (any, error) {
 	fields := evidenceFields{"type": textValue, "state_key_hash": textValue}
 	switch a.Get("type").Str {
 	case "write_resource":
 		fields["address"] = textValue
-		fields["data"] = evidenceFields{"type": textValue, "data": equalValue}.match
+		fields["data"] = evidenceFields{"type": textValue, "data": rawValue}.project
 	case "write_table_item":
 		fields["handle"], fields["key"], fields["value"] = textValue, textValue, textValue
 	}
-	return fields.match(a, b)
+	return fields.project(a)
 }
 
 func digits(s string) bool {
 	return s != "" && strings.Trim(s, "0123456789") == ""
 }
 
-func uintValue(a, b gjson.Result) (any, error) {
-	if a.Type != gjson.Number || b.Type != gjson.Number || !digits(a.Raw) || !digits(b.Raw) {
+func uintValue(a gjson.Result) (any, error) {
+	if a.Type != gjson.Number || !digits(a.Raw) {
 		return nil, ErrTransactionData
 	}
-	return equalValue(a, b)
+	return rawValue(a)
 }
 
-func decimalText(a, b gjson.Result) (any, error) {
-	if !digits(a.Str) || !digits(b.Str) {
+func decimalText(a gjson.Result) (any, error) {
+	if !digits(a.Str) {
 		return nil, ErrTransactionData
 	}
-	return textValue(a, b)
+	return textValue(a)
 }
 
 var suiEvidence = evidenceFields{
 	"digest": textValue, "checkpoint": decimalText, "timestamp": optional(textValue),
-	"transaction":     evidenceFields{"sender": textValue}.match,
-	"effects":         evidenceFields{"status": evidenceFields{"success": boolValue}.match}.match,
-	"balance_changes": repeated(evidenceFields{"address": textValue, "coin_type": textValue, "amount": signedDecimal}.match),
+	"transaction":     evidenceFields{"sender": textValue}.project,
+	"effects":         evidenceFields{"status": evidenceFields{"success": boolValue}.project}.project,
+	"balance_changes": repeated(evidenceFields{"address": textValue, "coin_type": textValue, "amount": signedDecimal}.project),
 }
 
-func signedDecimal(a, b gjson.Result) (any, error) {
-	if !digits(strings.TrimPrefix(a.Str, "-")) || !digits(strings.TrimPrefix(b.Str, "-")) {
+func signedDecimal(a gjson.Result) (any, error) {
+	if !digits(strings.TrimPrefix(a.Str, "-")) {
 		return nil, ErrTransactionData
 	}
-	return textValue(a, b)
+	return textValue(a)
 }
 
-// An omitted TransactionInfo.result is the protobuf default SUCESS. A
-// missing receipt.result is normal on native transfers. A reported failure
-// must never disappear through optional-field handling.
-func tronResult(a, b gjson.Result) (any, error) {
-	for _, v := range []gjson.Result{a, b} {
-		if v.Exists() && v.Str != "SUCCESS" && v.Str != "SUCESS" {
-			return textValue(a, b)
-		}
-	}
-	return optional(textValue)(a, b)
-}
-
-// The wallet endpoints use hex with visible=false. Compare the bytes while
-// preserving their length (leading zero bytes in log data are significant).
-func tronHexBytes(a, b gjson.Result) (any, error) {
-	if a.Type != gjson.String || b.Type != gjson.String {
+func tronHexBytes(a gjson.Result) (any, error) {
+	if a.Type != gjson.String {
 		return nil, ErrTransactionData
 	}
 	if _, err := hex.DecodeString(a.Str); err != nil {
 		return nil, ErrTransactionData
-	}
-	if _, err := hex.DecodeString(b.Str); err != nil {
-		return nil, ErrTransactionData
-	}
-	if !strings.EqualFold(a.Str, b.Str) {
-		return nil, ErrEvidenceConflict
 	}
 	return strings.ToLower(a.Str), nil
 }
 
 var tronEvidence = evidenceFields{
 	"transaction": evidenceFields{
-		"txID": tronHexBytes, "raw_data_hex": optional(tronHexBytes), "ret": list(evidenceFields{"contractRet": textValue}.match),
+		"txID": tronHexBytes, "raw_data_hex": optional(tronHexBytes), "ret": list(evidenceFields{"contractRet": textValue}.project),
 		"raw_data": evidenceFields{
 			"contract": list(tronContract),
-		}.match,
-	}.match,
+		}.project,
+	}.project,
 	"receipt": evidenceFields{
-		"id": tronHexBytes, "blockNumber": uintValue, "blockTimeStamp": uintValue, "result": tronResult,
+		"id": tronHexBytes, "blockNumber": uintValue, "blockTimeStamp": uintValue, "result": optional(textValue),
 		"receipt": tronReceipt,
-		"log":     repeated(evidenceFields{"address": tronHexBytes, "topics": repeated(tronHexBytes), "data": tronLogData}.match),
-	}.match,
+		"log":     repeated(evidenceFields{"address": tronHexBytes, "topics": repeated(tronHexBytes), "data": tronLogData}.project),
+	}.project,
 }
 
-func tronContract(a, b gjson.Result) (any, error) {
+func tronContract(a gjson.Result) (any, error) {
 	fields := evidenceFields{"type": textValue}
 	var value evidenceFields
 	switch a.Get("type").Str {
@@ -284,39 +221,26 @@ func tronContract(a, b gjson.Result) (any, error) {
 		value = evidenceFields{"owner_address": tronHexBytes, "to_address": tronHexBytes, "amount": uintValue}
 	case "TriggerSmartContract":
 		value = evidenceFields{"owner_address": tronHexBytes, "contract_address": tronHexBytes, "data": tronLogData,
-			"call_value": tronCallValue, "call_token_value": tronCallValue, "token_id": tronCallValue}
+			"call_value": optional(uintValue), "call_token_value": optional(uintValue), "token_id": optional(uintValue)}
 	}
 	if value != nil {
-		fields["parameter"] = evidenceFields{"value": value.match}.match
+		fields["parameter"] = evidenceFields{"value": value.project}.project
 	}
-	return fields.match(a, b)
+	return fields.project(a)
 }
 
-func tronCallValue(a, b gjson.Result) (any, error) {
-	if !a.Exists() || !b.Exists() {
-		if (a.Exists() && a.Raw != "0") || (b.Exists() && b.Raw != "0") {
-			return nil, ErrTransactionData
-		}
-		return nil, nil
+func tronLogData(a gjson.Result) (any, error) {
+	if !a.Exists() {
+		return "", nil
 	}
-	return uintValue(a, b)
+	return tronHexBytes(a)
 }
 
-func tronLogData(a, b gjson.Result) (any, error) {
-	// bytes fields are omitted when empty in the protobuf JSON response.
-	for _, v := range []*gjson.Result{&a, &b} {
-		if !v.Exists() {
-			*v = gjson.Parse(`""`)
-		}
-	}
-	return tronHexBytes(a, b)
-}
-
-func tronReceipt(a, b gjson.Result) (any, error) {
-	if (a.Exists() && !a.IsObject()) || (b.Exists() && !b.IsObject()) {
+func tronReceipt(a gjson.Result) (any, error) {
+	if a.Exists() && !a.IsObject() {
 		return nil, ErrTransactionData
 	}
-	v, err := tronResult(a.Get("result"), b.Get("result"))
+	v, err := optional(textValue)(a.Get("result"))
 	if err != nil || v == nil {
 		return nil, err
 	}
@@ -326,65 +250,38 @@ func tronReceipt(a, b gjson.Result) (any, error) {
 // Use raw message contents, not the indexer's optional ABI decoding.
 var tonMessage = evidenceFields{
 	"hash": tonHash, "source": optional(tonAccount), "destination": optional(tonAccount),
-	"value": optional(decimalText), "bounced": adverseFlag, "bounce": optional(boolValue),
-	"message_content": optional(evidenceFields{"hash": tonHash, "body": textValue}.match),
+	"value": optional(decimalText), "bounced": optional(boolValue), "bounce": optional(boolValue),
+	"message_content": optional(evidenceFields{"hash": tonHash, "body": textValue}.project),
 }
 
-func adverseFlag(a, b gjson.Result) (any, error) {
-	if a.Type == gjson.True || b.Type == gjson.True {
-		return boolValue(a, b)
-	}
-	return optional(boolValue)(a, b)
-}
-
-func nullableMessage(a, b gjson.Result) (any, error) {
-	if a.Type == gjson.Null && b.Type == gjson.Null && (!a.Exists() || !b.Exists()) {
+func nullableMessage(a gjson.Result) (any, error) {
+	if !a.Exists() {
 		return nil, nil
 	}
-	if a.Type == gjson.Null || b.Type == gjson.Null {
-		return equalValue(a, b)
+	if a.Type == gjson.Null {
+		return rawValue(a)
 	}
-	return tonMessage.match(a, b)
+	return tonMessage.project(a)
 }
 
-// Index votes bind the consumer's transaction cell to a confirmed chain
-// location. Only direct LiteServer votes may return a proven transaction BOC.
 var tonIndexEvidence = evidenceFields{
 	"hash": tonHash, "account": tonAccount, "lt": decimalText, "now": uintValue, "mc_block_seqno": uintValue,
-	"block_ref":   evidenceFields{"workchain": equalValue, "shard": textValue, "seqno": uintValue}.match,
-	"description": optional(evidenceFields{"type": textValue, "aborted": adverseFlag, "destroyed": adverseFlag}.match),
-	"in_msg":      nullableMessage, "out_msgs": optionalList(tonMessage.match),
+	"block_ref":   evidenceFields{"workchain": rawValue, "shard": textValue, "seqno": uintValue}.project,
+	"description": optional(evidenceFields{"type": textValue, "aborted": optional(boolValue), "destroyed": optional(boolValue)}.project),
+	"in_msg":      nullableMessage, "out_msgs": optional(list(tonMessage.project)),
 }
 
-func tonHash(a, b gjson.Result) (any, error) {
+func tonHash(a gjson.Result) (any, error) {
 	left, err := TransactionHash("ton", a.Str)
 	if err != nil {
 		return nil, err
-	}
-	right, err := TransactionHash("ton", b.Str)
-	if err != nil {
-		return nil, err
-	}
-	if left != right {
-		return nil, ErrEvidenceConflict
 	}
 	raw, _ := hex.DecodeString(left)
 	return base64.StdEncoding.EncodeToString(raw), nil
 }
 
-func tonAccount(a, b gjson.Result) (any, error) {
-	left, err := Canonical("ton", a.Str)
-	if err != nil {
-		return nil, err
-	}
-	right, err := Canonical("ton", b.Str)
-	if err != nil {
-		return nil, err
-	}
-	if left != right {
-		return nil, ErrEvidenceConflict
-	}
-	return left, nil
+func tonAccount(a gjson.Result) (any, error) {
+	return Canonical("ton", a.Str)
 }
 
 func checkStrictRecord(n Network, v gjson.Result) error {
@@ -421,28 +318,9 @@ func checkStrictRecord(n Network, v gjson.Result) error {
 	return nil
 }
 
-// AgreeTransaction receives two successful, identity-checked lookup results.
-func AgreeTransaction(n Network, left, right json.RawMessage) (json.RawMessage, error) {
-	a, b := gjson.ParseBytes(left), gjson.ParseBytes(right)
-	for _, v := range []gjson.Result{a, b} {
-		if err := checkStrictRecord(n, v); err != nil {
-			return nil, err
-		}
-	}
-
-	if IsEVM(n.Name) || n.Name == "ton" && n.Protocol == "lite" {
-		// These readers already return locally constructed canonical evidence.
-		if len(left) == 0 || !bytes.Equal(left, right) {
-			return nil, ErrEvidenceConflict
-		}
-		return left, nil
-	}
-	return projectTransaction(n, a, b)
-}
-
-// FallbackTransactionEvidence validates and projects a single successful,
-// identity-checked read from an operator-configured fallback.
-func FallbackTransactionEvidence(n Network, raw json.RawMessage) (json.RawMessage, error) {
+// TransactionEvidence validates and projects a single successful,
+// identity-checked read from one node.
+func TransactionEvidence(n Network, raw json.RawMessage) (json.RawMessage, error) {
 	v := gjson.ParseBytes(raw)
 	if !v.IsObject() {
 		return nil, ErrTransactionData
@@ -455,12 +333,8 @@ func FallbackTransactionEvidence(n Network, raw json.RawMessage) (json.RawMessag
 	}
 	if n.Name == "ton" && n.Protocol == "lite" {
 		return raw, nil
-	} // VerifyTON has checked the inclusion proof.
-	// Apply the same field and type rules to this record without claiming a second vote.
-	return projectTransaction(n, v, v)
-}
+	}
 
-func projectTransaction(n Network, a, b gjson.Result) (json.RawMessage, error) {
 	var fields evidenceFields
 	switch {
 	case n.Name == "solana":
@@ -476,9 +350,9 @@ func projectTransaction(n Network, a, b gjson.Result) (json.RawMessage, error) {
 	default:
 		return nil, ErrTransactionData
 	}
-	v, err := fields.match(a, b)
+	projected, err := fields.project(v)
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(v)
+	return json.Marshal(projected)
 }
