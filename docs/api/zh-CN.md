@@ -149,6 +149,7 @@ consumer "$BASE/v1/events/next?network=base&wait=15"
 | `activity.confirmations, activity.time_ms` | `int64, int64` | 观察到的确认数、链上时间戳（Unix 毫秒）。 |
 | `activity.addresses` | `string[]` | 该消费者本次匹配到的监听地址。 |
 | `activity.data` | `JSON` | 链专属 JSON 证据。EVM 数据可包含 `transaction`、`logs`、`receipt`、`trace`。 |
+| `activity.data.refresh_assets` | `string[]` | 识别到全局余额调整时，列出需要刷新的代币合约；为空时省略。 [EVM](../guide/zh-CN.md#asset-events) |
 
 <a id="ack"></a>
 

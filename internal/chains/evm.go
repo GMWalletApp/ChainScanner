@@ -144,10 +144,7 @@ func (s *jsonSource) ReadLinkedBlock(ctx context.Context, h int64, link *BlockLi
 		addAddress(&e.Addresses, s.n.Name, tx.Get("from").String())
 		addAddress(&e.Addresses, s.n.Name, tx.Get("to").String())
 		for _, l := range byHash[id] {
-			addAddress(&e.Addresses, s.n.Name, l.Get("address").String())
-			if topics := l.Get("topics").Array(); len(topics) > 1 {
-				indexTopics(&e.Addresses, s.n.Name, topics[1:])
-			}
+			s.n.indexEVMLog(&e.Addresses, &data, l.Get("address").String(), l.Get("topics").Array(), l)
 			data.Logs = append(data.Logs, json.RawMessage(l.Raw))
 		}
 		if trace, ok := traces[id]; ok {
