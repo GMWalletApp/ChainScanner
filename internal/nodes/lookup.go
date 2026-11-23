@@ -23,6 +23,7 @@ type lookupCandidate struct {
 	weight     int
 	healthy    bool
 	fallback   bool
+	lastChoice bool
 	peerID     string
 	primaryURL string
 	cfg        chains.Network
@@ -145,47 +146,55 @@ func (l *transactionLookup) take(candidates []lookupCandidate, used map[string]b
 	return group
 }
 
+type lookupChoices struct{ fresh, cold []lookupCandidate }
+
+func (l *transactionLookup) rank(candidates []lookupCandidate) (ordinary, paid, last lookupChoices) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	for _, c := range candidates {
+		dst := &ordinary
+		switch {
+		case c.lastChoice:
+			dst = &last
+		case c.fallback:
+			dst = &paid
+		}
+		if c.healthy || now.Before(l.penalties[c.version].verified) {
+			dst.fresh = append(dst.fresh, c)
+		} else {
+			dst.cold = append(dst.cold, c)
+		}
+	}
+	return
+}
+
 func (l *transactionLookup) group(ctx context.Context, candidates []lookupCandidate, used map[string]bool, count int) []lookupLease {
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
-	var fresh, cold, paidFresh, paidCold []lookupCandidate
-	l.mu.Lock()
-	for _, c := range candidates {
-		healthy := c.healthy || time.Now().Before(l.penalties[c.version].verified)
-		if c.fallback {
-			if healthy {
-				paidFresh = append(paidFresh, c)
-			} else {
-				paidCold = append(paidCold, c)
-			}
-			continue
-		}
-		if healthy {
-			fresh = append(fresh, c)
-		} else {
-			cold = append(cold, c)
-		}
-	}
-	l.mu.Unlock()
+	ordinary, paid, last := l.rank(candidates)
 	idleWindow := 4 * time.Second
 	if count == strictGroupSize {
 		idleWindow = 2 * time.Second
 	}
 	idleCtx, stop := context.WithTimeout(ctx, idleWindow)
 	var group []lookupLease
-	if count == strictGroupSize && len(paidFresh)+len(paidCold) > 0 {
+	if count == strictGroupSize && len(paid.fresh)+len(paid.cold) > 0 {
 		// Independent fallback providers may fill both voting slots.
-		group = l.fill(idleCtx, paidFresh, paidCold, used, count, true)
+		group = l.fill(idleCtx, paid.fresh, paid.cold, used, count, true)
 	}
-	group = append(group, l.fill(idleCtx, fresh, cold, used, count-len(group), false)...)
+	group = append(group, l.fill(idleCtx, ordinary.fresh, ordinary.cold, used, count-len(group), false)...)
 	stop()
 	if count == strictGroupSize && len(group) < count {
-		group = append(group, l.fill(ctx, fresh, cold, used, count-len(group), true)...)
+		group = append(group, l.fill(ctx, ordinary.fresh, ordinary.cold, used, count-len(group), true)...)
 		if len(group) < count {
-			group = append(group, l.fill(ctx, paidFresh, paidCold, used, count-len(group), true)...)
+			group = append(group, l.fill(ctx, paid.fresh, paid.cold, used, count-len(group), true)...)
 		}
 	}
 
+	if count == strictGroupSize && len(group) < count {
+		group = append(group, l.fill(ctx, last.fresh, last.cold, used, count-len(group), true)...)
+	}
 	if len(group) == count {
 		return group
 	}
@@ -293,30 +302,67 @@ func (r *NodeRegistry) tonGroup(ctx context.Context, candidates []lookupCandidat
 		}
 	}
 	if len(peers) >= 2 {
-		var location *chains.TONLocation
-		locate, stop := context.WithTimeout(ctx, 3*time.Second)
-		for _, idx := range indexes {
-			if !r.lookup.ready(idx.version, time.Now()) {
-				continue
-			}
-			hint, err := chains.LocateTON(locate, idx.cfg, hash)
-			if err == nil {
-				location = &hint
-				break
-			}
-			if locate.Err() != nil {
-				break
-			}
-		}
-		stop()
-		if hint := location; hint != nil {
-			g := r.lookup.group(ctx, peers, used, strictGroupSize)
-			if len(g) > 0 {
-				return g, func(ctx context.Context, n chains.Network, h string, _ bool) (json.RawMessage, error) {
-					return chains.VerifyTON(ctx, n, h, *hint)
-				}
+		if read := r.tonProofReader(ctx, indexes, hash); read != nil {
+			if group := r.lookup.group(ctx, peers, used, strictGroupSize); len(group) > 0 {
+				return group, read
 			}
 		}
 	}
 	return r.lookup.group(ctx, indexes, used, strictGroupSize), r.lookup.read
+}
+
+// The index supplies a location hint; only the selected LiteServer supplies the proof.
+func (r *NodeRegistry) tonProofReader(ctx context.Context, candidates []lookupCandidate, hash string) transactionReader {
+	locate, stop := context.WithTimeout(ctx, 3*time.Second)
+	defer stop()
+	for _, idx := range candidates {
+		if locate.Err() != nil {
+			break
+		}
+		if idx.cfg.Protocol != "toncenter-v3" || !r.lookup.ready(idx.version, time.Now()) {
+			continue
+		}
+		hint, err := chains.LocateTON(locate, idx.cfg, hash)
+		if err == nil {
+			return func(ctx context.Context, n chains.Network, h string, _ bool) (json.RawMessage, error) {
+				return chains.VerifyTON(ctx, n, h, hint)
+			}
+		}
+	}
+	return nil
+}
+
+// Trust one operator-configured fallback for the initial lookup only. Reserve
+// independently of the voting rounds so two configured endpoints can still form a pair.
+func (r *NodeRegistry) firstFallback(ctx context.Context, candidates []lookupCandidate, hash string) (json.RawMessage, []lookupLease, error) {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	_, paid, _ := r.lookup.rank(candidates)
+	group := r.lookup.fill(ctx, paid.fresh, paid.cold, map[string]bool{}, 1, true)
+	if len(group) == 0 {
+		return nil, nil, errCapacity
+	}
+	node := group[0]
+	read := transactionReader(r.lookup.read)
+	if node.peerID != "" {
+		read = r.tonProofReader(ctx, candidates, hash)
+		if read == nil {
+			node.release()
+			return nil, group, errCapacity
+		}
+	}
+	value, err := r.lookup.round(ctx, group, hash, func(ctx context.Context, n chains.Network, h string, public bool) (json.RawMessage, error) {
+		raw, err := read(ctx, n, h, public)
+		if err != nil {
+			return nil, err
+		}
+		return chains.FallbackTransactionEvidence(n, raw)
+	})
+	if err != nil {
+		return nil, group, err
+	}
+	if ctx.Err() != nil || !r.groupAllowed(ctx, group) {
+		return nil, group, errCapacity
+	}
+	return value, group, nil
 }

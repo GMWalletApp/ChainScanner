@@ -174,3 +174,24 @@ func TestStrictPendingHasNoConfirmedResult(t *testing.T) {
 		})
 	}
 }
+
+func TestFallbackProjectsChainEvidence(t *testing.T) {
+	for _, name := range []string{"solana", "tron", "sui", "aptos", "ton"} {
+		t.Run(name, func(t *testing.T) {
+			n := Network{Name: name}
+			if name == "ton" {
+				n.Protocol = "toncenter-v3"
+			}
+			input := rpcFixture(t, name)
+			withExtension := modifyEvidence(t, input, "diagnostic", "one provider only")
+			got, err := FallbackTransactionEvidence(n, withExtension)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := AgreeTransaction(n, withExtension, input)
+			if err != nil || !bytes.Equal(got, want) || gjson.GetBytes(got, "diagnostic").Exists() {
+				t.Fatalf("inconsistent evidence: %s, %v", got, err)
+			}
+		})
+	}
+}

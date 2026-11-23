@@ -430,14 +430,39 @@ func AgreeTransaction(n Network, left, right json.RawMessage) (json.RawMessage, 
 		}
 	}
 
-	var fields evidenceFields
-	switch {
-	case IsEVM(n.Name), n.Name == "ton" && n.Protocol == "lite":
-		// These two readers already return locally constructed canonical evidence.
+	if IsEVM(n.Name) || n.Name == "ton" && n.Protocol == "lite" {
+		// These readers already return locally constructed canonical evidence.
 		if len(left) == 0 || !bytes.Equal(left, right) {
 			return nil, ErrEvidenceConflict
 		}
 		return left, nil
+	}
+	return projectTransaction(n, a, b)
+}
+
+// FallbackTransactionEvidence validates and projects a single successful,
+// identity-checked read from an operator-configured fallback.
+func FallbackTransactionEvidence(n Network, raw json.RawMessage) (json.RawMessage, error) {
+	v := gjson.ParseBytes(raw)
+	if !v.IsObject() {
+		return nil, ErrTransactionData
+	}
+	if err := checkStrictRecord(n, v); err != nil {
+		return nil, err
+	}
+	if IsEVM(n.Name) {
+		return canonicalEVMEvidence(v.Get("transaction"), v.Get("receipt"))
+	}
+	if n.Name == "ton" && n.Protocol == "lite" {
+		return raw, nil
+	} // VerifyTON has checked the inclusion proof.
+	// Apply the same field and type rules to this record without claiming a second vote.
+	return projectTransaction(n, v, v)
+}
+
+func projectTransaction(n Network, a, b gjson.Result) (json.RawMessage, error) {
+	var fields evidenceFields
+	switch {
 	case n.Name == "solana":
 		fields = solEvidence
 	case n.Name == "aptos":

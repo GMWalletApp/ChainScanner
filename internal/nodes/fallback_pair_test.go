@@ -3,7 +3,10 @@ package nodes
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/tidwall/gjson"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -32,7 +35,7 @@ func TestFallbackPairsThroughAdminAndStrictAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call := func(method, path, body, token string, status int) {
+	call := func(method, path, body, token string, status int) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -41,6 +44,7 @@ func TestFallbackPairsThroughAdminAndStrictAPI(t *testing.T) {
 		if w.Code != status {
 			t.Fatalf("%s %s: %d %s", method, path, w.Code, w.Body.String())
 		}
+		return w
 	}
 	for _, host := range []string{"regular.example", "paid-one.example", "paid-two.example"} {
 		path := "/v1/admin/nodes"
@@ -50,26 +54,84 @@ func TestFallbackPairsThroughAdminAndStrictAPI(t *testing.T) {
 		call("POST", path, `{"network":"base","url":"https://`+host+`","protocol":"http"}`, admin, 201)
 	}
 	r.lookup.probe = func(context.Context, chains.Network, bool) error { return nil }
-	var mu sync.Mutex
-	calls := map[string]int{}
-	r.lookup.read = func(_ context.Context, n chains.Network, _ string, _ bool) (json.RawMessage, error) {
-		mu.Lock()
-		calls[n.URL]++
-		mu.Unlock()
-		return json.RawMessage(`{"tx":"ok"}`), nil
+	sample, err := os.ReadFile("../chains/testdata/strict/evm.json")
+	if err != nil {
+		t.Fatal(err)
 	}
-	path := "/v1/transactions/base/0x" + strings.Repeat("ab", 32) + "/strict"
-	call("GET", path, "", client, 200)
-	call("GET", path+"?fallback_only=true", "", client, 200)
-	if len(calls) != 2 || calls["https://paid-one.example"] != 2 || calls["https://paid-two.example"] != 2 {
+	hash := gjson.GetBytes(sample, "transaction.hash").Str
+	var mu sync.Mutex
+	var calls []string
+	var fallbackErr error
+	var fallbackBody json.RawMessage = sample
+	r.lookup.read = func(_ context.Context, n chains.Network, h string, _ bool) (json.RawMessage, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if h != hash {
+			t.Errorf("unexpected hash %s", h)
+		}
+		calls = append(calls, n.URL)
+		if strings.Contains(n.URL, "paid-") {
+			return fallbackBody, fallbackErr
+		}
+		return sample, nil
+	}
+	path := "/v1/transactions/base/" + hash + "/strict"
+	check := func(suffix, mode string, wantCode, wantCalls int) {
+		t.Helper()
+		calls = nil
+		w := call("GET", path+suffix, "", client, wantCode)
+		if len(calls) != wantCalls || gjson.Get(w.Body.String(), "verification").Str != mode {
+			t.Fatalf("%s: calls %v, response %s", suffix, calls, w.Body.String())
+		}
+		if w.Code == 200 && gjson.Get(w.Body.String(), "result.transaction.hash").Str != hash {
+			t.Fatal("wrong transaction", w.Body.String())
+		}
+	}
+	check("", "fallback_rpc", 200, 1)
+	w := call("GET", path+"?rounds=1", "", client, 200)
+	source := w.Header().Get("X-ChainScanner-Pair")
+	if len(source) != 64 || w.Header().Get("X-ChainScanner-Strict-Rounds") != "1" {
+		t.Fatal(w.Header())
+	}
+	calls = nil
+	retry := httptest.NewRequest("GET", path+"?rounds=1", nil)
+	retry.Header.Set("Authorization", "Bearer "+client)
+	retry.Header.Set("X-ChainScanner-Exclude", source)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, retry)
+	if w.Code != 200 || len(calls) != 2 || gjson.Get(w.Body.String(), "verification").Str != "two_providers" || strings.Contains(w.Header().Get("X-ChainScanner-Pair"), source) {
+		t.Fatal(w.Code, w.Header(), calls)
+	}
+	check("?fallback_only=true", "fallback_rpc", 200, 1)
+	if !strings.Contains(calls[0], "paid-") {
 		t.Fatal(calls)
 	}
 	call("PUT", "/v1/admin/blacklist/keyword:paid-two", "", admin, 204)
-	call("GET", path+"?fallback_only=true", "", client, 503)
-	call("GET", path, "", client, 200)
-	if calls["https://regular.example"] != 1 || calls["https://paid-two.example"] != 2 {
-		t.Fatal(calls)
+	check("?fallback_only=true", "fallback_rpc", 200, 1)
+	// Without another usable fallback, fallback-only cannot form a pair.
+	fallbackBody = json.RawMessage(`{"receipt":null}`)
+	check("?fallback_only=true&rounds=1", "", 503, 1)
+	// Two regular endpoints can still verify a payment after one fallback
+	// returns pending, malformed data, an RPC error or a missing transaction.
+	call("POST", "/v1/admin/nodes", `{"network":"base","url":"https://regular-two.example","protocol":"http"}`, admin, 201)
+	for _, tc := range []struct {
+		raw json.RawMessage
+		err error
+	}{
+		{fallbackBody, nil}, {json.RawMessage(`{}`), nil}, {nil, errors.New("upstream unavailable")}, {nil, chains.ErrTransactionMissing},
+	} {
+		fallbackBody, fallbackErr = tc.raw, tc.err
+		check("?rounds=1", "two_providers", 200, 3)
+		if !strings.Contains(calls[0], "paid-one") || calls[1] == calls[2] || !strings.Contains(calls[1], "regular") || !strings.Contains(calls[2], "regular") {
+			t.Fatal(calls)
+		}
 	}
+	// An ordinary request continues to use one regular endpoint.
+	w = call("GET", strings.TrimSuffix(path, "/strict"), "", client, 200)
+	if gjson.Get(w.Body.String(), "verification").Exists() || !strings.Contains(calls[len(calls)-1], "regular") {
+		t.Fatal(w.Body, calls)
+	}
+
 }
 
 func TestRepairsRotateIndependentlyOfFreshBlocks(t *testing.T) {

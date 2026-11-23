@@ -283,7 +283,7 @@ func TestSingleStrictRoundRetriesWithTwoNewProviders(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, q)
 		previous = w.Header().Get("X-ChainScanner-Pair")
-		if w.Code != 502 || w.Header().Get("X-ChainScanner-Strict-Rounds") != "1" || len(strings.Split(previous, ",")) != 2 || len(seen) != 2*(round+1) || seen["https://p0.example"] != 1 {
+		if w.Code != 502 || w.Header().Get("X-ChainScanner-Strict-Rounds") != "1" || len(strings.Split(previous, ",")) != 2 || len(seen) != min(3+2*round, 4) || seen["https://p0.example"] != round+1 {
 			t.Fatal(w.Code, w.Header(), seen)
 		}
 	}

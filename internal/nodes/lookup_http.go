@@ -66,6 +66,7 @@ func (r *NodeRegistry) lookupHandler(configured map[string]chains.Network, stric
 		used := map[string]bool{}
 		lastStatus := http.StatusBadGateway
 		var evidenceReason string
+		var triedFallback []lookupLease
 
 		for attempt := 1; attempt <= rounds; attempt++ {
 			if ctx.Err() != nil {
@@ -89,6 +90,27 @@ func (r *NodeRegistry) lookupHandler(configured map[string]chains.Network, stric
 					}
 				}
 			}
+			if strict && attempt == 1 && len(omitted) == 0 {
+				value, tried, err := r.firstFallback(ctx, candidates, hash)
+				triedFallback = tried
+				if err == nil {
+					if single {
+						w.Header().Set("X-ChainScanner-Pair", pairHeader(tried))
+					}
+					writeTransactionResult(w, n, hash, value, "fallback_rpc")
+					return
+				}
+				evidenceReason = lookupEvidenceReason(evidenceReason, err)
+				if ctx.Err() != nil {
+					return
+				}
+			}
+			if len(triedFallback) > 0 {
+				first := triedFallback[0]
+				for i, c := range candidates {
+					candidates[i].lastChoice = c.key == first.key || first.peerID != "" && c.peerID == first.peerID
+				}
+			}
 			var group []lookupLease
 			read := transactionReader(r.lookup.read)
 			if strict && n == "ton" {
@@ -106,23 +128,15 @@ func (r *NodeRegistry) lookupHandler(configured map[string]chains.Network, stric
 			v, err := r.lookup.round(ctx, group, hash, read)
 			lastStatus = http.StatusBadGateway
 			if err == nil && r.groupAllowed(ctx, group) {
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(struct {
-					Network string          `json:"network"`
-					Hash    string          `json:"hash"`
-					Result  json.RawMessage `json:"result"`
-				}{n, hash, v})
+				verification := ""
+				if strict {
+					verification = "two_providers"
+				}
+				writeTransactionResult(w, n, hash, v, verification)
 				return
 			}
 			// Keep a disagreement visible if the retry cannot form a fresh pair.
-			switch {
-			case errors.Is(err, chains.ErrEvidenceConflict):
-				evidenceReason = "conflict"
-			case evidenceReason != "conflict" && (errors.Is(err, chains.ErrTransactionData) || errors.Is(err, chains.ErrTransactionMissing)):
-				evidenceReason = "incomplete"
-			case evidenceReason == "" && errors.Is(err, chains.ErrTransactionPending):
-				evidenceReason = "pending"
-			}
+			evidenceReason = lookupEvidenceReason(evidenceReason, err)
 			if !strict && errors.Is(err, chains.ErrTransactionMissing) {
 				http.Error(w, "transaction not found", 404)
 				return
@@ -139,6 +153,29 @@ func (r *NodeRegistry) lookupHandler(configured map[string]chains.Network, stric
 		} else {
 			http.Error(w, errAgreement.Error(), lastStatus)
 		}
+	}
+}
+
+func writeTransactionResult(w http.ResponseWriter, network, hash string, result json.RawMessage, verification string) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		Network      string          `json:"network"`
+		Hash         string          `json:"hash"`
+		Result       json.RawMessage `json:"result"`
+		Verification string          `json:"verification,omitempty"`
+	}{network, hash, result, verification})
+}
+
+func lookupEvidenceReason(previous string, err error) string {
+	switch {
+	case errors.Is(err, chains.ErrEvidenceConflict):
+		return "conflict"
+	case previous != "conflict" && (errors.Is(err, chains.ErrTransactionData) || errors.Is(err, chains.ErrTransactionMissing)):
+		return "incomplete"
+	case previous == "" && errors.Is(err, chains.ErrTransactionPending):
+		return "pending"
+	default:
+		return previous
 	}
 }
 
