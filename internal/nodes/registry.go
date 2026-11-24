@@ -78,6 +78,9 @@ func NewNodeRegistry(ctx context.Context, s *engine.Store, networks []chains.Net
 		if _, ok := enabled[n.Name]; ok {
 			return nil, errors.New("duplicate network")
 		}
+		if err := n.ValidateAssetEvents(); err != nil {
+			return nil, err
+		}
 		enabled[n.Name] = n
 		r.scanAttempts[n.Name] = new(scanAttempts)
 	}
@@ -391,6 +394,7 @@ func (r *NodeRegistry) network(n Node, settings chains.Network) chains.Network {
 	src.Confirmations = settings.Confirmations
 	src.Lookback = settings.Lookback
 	src.IntervalSeconds = settings.IntervalSeconds
+	src.AssetEvents = settings.AssetEvents
 	src.TraceCalls = settings.TraceCalls
 	return src
 }

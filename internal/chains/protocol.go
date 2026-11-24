@@ -106,6 +106,9 @@ func (n Network) endpoint() (*url.URL, string, error) {
 func ValidateEndpoint(n Network) error { _, _, err := n.endpoint(); return err }
 
 func ValidateNetwork(n Network) error {
+	if err := n.ValidateAssetEvents(); err != nil {
+		return err
+	}
 	_, p, err := n.endpoint()
 	if err != nil {
 		return err

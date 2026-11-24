@@ -149,6 +149,7 @@ The example shows the delivery envelope with abbreviated transaction evidence. A
 | `activity.confirmations, activity.time_ms` | `int64, int64` | Observed confirmation count and chain timestamp in Unix milliseconds. |
 | `activity.addresses` | `string[]` | Subscribed addresses matched for this consumer. |
 | `activity.data` | `JSON` | Chain-specific JSON evidence. EVM evidence can include `transaction`, `logs`, `receipt` and `trace`. |
+| `activity.data.refresh_assets` | `string[]` | Token contracts to refresh after a recognized global balance event, omitted when empty. [EVM](../guide/en.md#asset-events) |
 
 <a id="ack"></a>
 

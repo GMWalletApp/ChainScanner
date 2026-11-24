@@ -311,10 +311,11 @@ func object(data any) json.RawMessage {
 }
 
 type Evidence struct {
-	Transaction json.RawMessage   `json:"transaction"`
-	Logs        []json.RawMessage `json:"logs,omitempty"`
-	Receipt     json.RawMessage   `json:"receipt,omitempty"`
-	Trace       json.RawMessage   `json:"trace,omitempty"`
+	RefreshAssets []string          `json:"refresh_assets,omitempty"`
+	Transaction   json.RawMessage   `json:"transaction"`
+	Logs          []json.RawMessage `json:"logs,omitempty"`
+	Receipt       json.RawMessage   `json:"receipt,omitempty"`
+	Trace         json.RawMessage   `json:"trace,omitempty"`
 }
 
 func indexTopics(a *[]string, n string, topics []gjson.Result) {
