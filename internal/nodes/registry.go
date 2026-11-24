@@ -78,6 +78,9 @@ func NewNodeRegistry(ctx context.Context, s *engine.Store, networks []chains.Net
 		if _, ok := enabled[n.Name]; ok {
 			return nil, errors.New("duplicate network")
 		}
+		if err := n.ValidateAssetEvents(); err != nil {
+			return nil, err
+		}
 		enabled[n.Name] = n
 		r.scanAttempts[n.Name] = new(scanAttempts)
 	}
@@ -394,6 +397,7 @@ func (r *NodeRegistry) network(n Node, settings chains.Network) chains.Network {
 	src.Confirmations = settings.Confirmations
 	src.Lookback = settings.Lookback
 	src.IntervalSeconds = settings.IntervalSeconds
+	src.AssetEvents = settings.AssetEvents
 	src.TraceCalls = settings.TraceCalls
 	return src
 }
@@ -427,7 +431,7 @@ func (r *NodeRegistry) Test(ctx context.Context, id int64) (Node, error) {
 	probe, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	src := r.network(n, chains.Network{})
-	defer r.lookup.lanes.scan(providerKey(src))()
+	defer r.lookup.lanes.scan(chains.ProviderKey(src))()
 	var height int64
 	if n.Protocol == "toncenter-v3" {
 		height, err = chains.TONIndexHeight(probe, src)

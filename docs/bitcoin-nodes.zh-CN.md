@@ -13,6 +13,6 @@ Go 适配器还通过两家 Core 节点分别读取了主网高度 977080，两�
 
 ## 配置
 
-- **ChainScanner** 在 `networks` 数组中加入 `{"name":"bitcoin","protocol":"jsonrpc","url":"https://bitcoin-rpc.publicnode.com","confirmations":2}`。扫描逐块读取 `getblock(hash,3)`，从 `vin[].prevout.scriptPubKey` 取得支付方，从每个输出的锁定脚本取得收款和找零地址。普通输入缺少前序输出时重试该块。自建节点需能提供待扫区间的区块和 undo 数据，按哈希查询历史交易还需同步 txindex。查询结果的 `hex` 是完整的序列化交易，`txid` 经本地解码复算，`blockhash` 在未入块时为空。[Bitcoin Core 说明](https://bitcoincore.org/en/releases/23.0/)
+- **ChainScanner** 在 `networks` 数组中加入 `{"name":"bitcoin","protocol":"jsonrpc","url":"https://bitcoin-rpc.publicnode.com","confirmations":2}`。扫描逐块读取 `getblock(hash,3)`，从 `vin[].prevout.scriptPubKey` 取得支付方，从每个输出的锁定脚本取得收款和找零地址。普通输入缺少前序输出时重试该块。自建节点需能提供待扫区间的区块和 undo 数据，按哈希查询历史交易还需同步 txindex。查询结果的 `hex` 是完整的序列化交易，`txid` 经本地解码复算，未入块交易按 `pending` 处理，确认后返回 `blockhash`。[Bitcoin Core 说明](https://bitcoincore.org/en/releases/23.0/)
 - **BalanceKeeper** 在 `networks` 对象中加入 `"bitcoin":{"rpc":"https://blockstream.info/api"}`。登记 BTC 使用 `{"name":"BTC","contract_address":null}`，按资产查询使用 `native`，最小单位是聪。自建可使用兼容 Esplora 的地址索引。[配置示例](https://github.com/GMWalletApp/BalanceKeeper/blob/main/config.example.json)
 - **Broadcaster** 使用 `POST /networks/bitcoin/transactions` 接收已签名交易。启用提供商需要按项目的现有准入流程验证写权限与 txindex。本次公共节点测试仅执行只读请求，实际广播链路使用本地签名交易样例验证。[提供商准入与 BTC 接口](https://github.com/GMWalletApp/Broadcaster/blob/main/docs/api.zh-CN.md)

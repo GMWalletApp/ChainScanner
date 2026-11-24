@@ -42,11 +42,11 @@ func bitcoinHash(h string) bool {
 func bitcoinScriptAddress(v gjson.Result) (string, error) {
 	field := v.Get("hex")
 	if field.Type != gjson.String {
-		return "", errTxData
+		return "", ErrTransactionData
 	}
 	b, err := hex.DecodeString(field.Str)
 	if err != nil {
-		return "", errTxData
+		return "", ErrTransactionData
 	}
 	class, addrs, _, err := txscript.ExtractPkScriptAddrs(b, &chaincfg.MainNetParams)
 	if err != nil {
@@ -55,7 +55,7 @@ func bitcoinScriptAddress(v gjson.Result) (string, error) {
 	switch class {
 	case txscript.PubKeyHashTy, txscript.ScriptHashTy, txscript.WitnessV0PubKeyHashTy, txscript.WitnessV0ScriptHashTy, txscript.WitnessV1TaprootTy:
 		if len(addrs) != 1 {
-			return "", errTxData
+			return "", ErrTransactionData
 		}
 		return addrs[0].EncodeAddress(), nil
 	}
@@ -66,7 +66,7 @@ func bitcoinActivity(tx gjson.Result, h, stamp int64, block string, first bool) 
 	id := tx.Get("txid").Str
 	inputs, outputs := tx.Get("vin").Array(), tx.Get("vout").Array()
 	if !bitcoinHash(id) || len(inputs) == 0 || len(outputs) == 0 {
-		return Activity{}, errTxData
+		return Activity{}, ErrTransactionData
 	}
 	addresses := []string{}
 	seen := map[string]bool{}
@@ -81,12 +81,12 @@ func bitcoinActivity(tx gjson.Result, h, stamp int64, block string, first bool) 
 	for _, input := range inputs {
 		if first {
 			if len(inputs) != 1 || input.Get("coinbase").Type != gjson.String {
-				return Activity{}, errTxData
+				return Activity{}, ErrTransactionData
 			}
 			continue
 		}
 		if !bitcoinHash(input.Get("txid").Str) || input.Get("vout").Type != gjson.Number {
-			return Activity{}, errTxData
+			return Activity{}, ErrTransactionData
 		}
 		if err := add(input.Get("prevout.scriptPubKey")); err != nil {
 			return Activity{}, err
@@ -106,7 +106,7 @@ func (s *jsonSource) bitcoinBlock(ctx context.Context, h int64, link *BlockLink)
 		return 0, nil, err
 	}
 	if !bitcoinHash(hash.Str) {
-		return 0, nil, errTxData
+		return 0, nil, ErrTransactionData
 	}
 	b, err := s.call(ctx, "getblock", hash.Str, 3)
 	if err != nil {
@@ -116,7 +116,7 @@ func (s *jsonSource) bitcoinBlock(ctx context.Context, h int64, link *BlockLink)
 	parent := b.Get("previousblockhash").Str
 	stamp := b.Get("time").Int()
 	if b.Get("hash").Str != hash.Str || b.Get("height").Type != gjson.Number || b.Get("height").Int() != h || (h > 0 && !bitcoinHash(parent)) || stamp <= 0 || len(txs) == 0 || b.Get("nTx").Int() != int64(len(txs)) {
-		return 0, nil, errTxData
+		return 0, nil, ErrTransactionData
 	}
 	rows := make([]Activity, 0, len(txs))
 	for i, t := range txs {
@@ -144,7 +144,7 @@ func (s *jsonSource) lookupBitcoin(ctx context.Context, id string) (json.RawMess
 	if err != nil {
 		var re rpc.Error
 		if errors.As(err, &re) && re.ErrorCode() == -5 {
-			// An unindexed node cannot vote that a historical transaction is absent.
+			// An unindexed node cannot report that a historical transaction is absent.
 			idx, e := s.call(ctx, "getindexinfo", "txindex")
 			if e == nil && idx.Get("txindex.synced").Raw == "true" {
 				return nil, ErrTransactionMissing
@@ -153,20 +153,53 @@ func (s *jsonSource) lookupBitcoin(ctx context.Context, id string) (json.RawMess
 		return nil, err
 	}
 	if !strings.EqualFold(tx.Get("txid").Str, id) || len(tx.Get("vin").Array()) == 0 || len(tx.Get("vout").Array()) == 0 {
-		return nil, errTxData
+		return nil, ErrTransactionData
 	}
-	// Confirmation counts change between providers. Keep only stable wire data
-	// and the inclusion hash so equal transactions can reach lookup quorum.
 	raw := tx.Get("hex").Str
 	b, e := hex.DecodeString(raw)
 	reader := bytes.NewReader(b)
 	var decoded wire.MsgTx
 	if e != nil || decoded.Deserialize(reader) != nil || reader.Len() != 0 || decoded.TxHash().String() != id {
-		return nil, errTxData
+		return nil, ErrTransactionData
 	}
 	block := tx.Get("blockhash").Str
 	if block != "" && (!bitcoinHash(block) || tx.Get("confirmations").Int() < 1) {
-		return nil, errTxData
+		return nil, ErrTransactionData
 	}
 	return canonicalTransaction(object(map[string]any{"txid": id, "hex": raw, "blockhash": block}))
+}
+
+func canonicalBitcoinEvidence(v gjson.Result) (json.RawMessage, error) {
+	txidField := v.Get("txid")
+	hexField := v.Get("hex")
+	blockField := v.Get("blockhash")
+	if txidField.Type != gjson.String || hexField.Type != gjson.String {
+		return nil, ErrTransactionData
+	}
+	txid := strings.ToLower(txidField.Str)
+	if !bitcoinHash(txid) {
+		return nil, ErrTransactionData
+	}
+	rawHex := strings.ToLower(hexField.Str)
+	b, err := hex.DecodeString(rawHex)
+	reader := bytes.NewReader(b)
+	var decoded wire.MsgTx
+	if err != nil || decoded.Deserialize(reader) != nil || reader.Len() != 0 || decoded.TxHash().String() != txid {
+		return nil, ErrTransactionData
+	}
+	if blockField.Type == gjson.String && blockField.Str == "" {
+		return nil, ErrTransactionPending
+	}
+	if blockField.Type != gjson.String {
+		return nil, ErrTransactionData
+	}
+	block := strings.ToLower(blockField.Str)
+	if !bitcoinHash(block) {
+		return nil, ErrTransactionData
+	}
+	return json.Marshal(struct {
+		BlockHash string `json:"blockhash"`
+		Hex       string `json:"hex"`
+		TxID      string `json:"txid"`
+	}{BlockHash: block, Hex: rawHex, TxID: txid})
 }

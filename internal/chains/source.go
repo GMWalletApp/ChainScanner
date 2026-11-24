@@ -247,6 +247,12 @@ func (s *jsonSource) request(ctx context.Context, path string, post any) (gjson.
 		if res.StatusCode == http.StatusTooManyRequests {
 			return gjson.Result{}, ErrRateLimited
 		}
+		if s.n.Name == "aptos" && res.StatusCode == http.StatusNotFound && strings.HasPrefix(strings.TrimPrefix(path, "/v1"), "/transactions/by_hash/") {
+			body, readErr := io.ReadAll(io.LimitReader(res.Body, 8192))
+			if readErr == nil && gjson.ValidBytes(body) && gjson.GetBytes(body, "error_code").Str == "transaction_not_found" {
+				return gjson.Result{}, ErrTransactionMissing
+			}
+		}
 		return gjson.Result{}, rpc.HTTPError{StatusCode: res.StatusCode, Status: res.Status}
 	}
 	b, err := io.ReadAll(io.LimitReader(res.Body, (64<<20)+1))
@@ -324,10 +330,11 @@ func object(data any) json.RawMessage {
 }
 
 type Evidence struct {
-	Transaction json.RawMessage   `json:"transaction"`
-	Logs        []json.RawMessage `json:"logs,omitempty"`
-	Receipt     json.RawMessage   `json:"receipt,omitempty"`
-	Trace       json.RawMessage   `json:"trace,omitempty"`
+	RefreshAssets []string          `json:"refresh_assets,omitempty"`
+	Transaction   json.RawMessage   `json:"transaction"`
+	Logs          []json.RawMessage `json:"logs,omitempty"`
+	Receipt       json.RawMessage   `json:"receipt,omitempty"`
+	Trace         json.RawMessage   `json:"trace,omitempty"`
 }
 
 func indexTopics(a *[]string, n string, topics []gjson.Result) {
